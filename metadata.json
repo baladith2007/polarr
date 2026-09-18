@@ -1,0 +1,6 @@
+{
+  "name": "Polar Ops & Cargo Scanner",
+  "description": "Antarctic station field operations, cargo QR scanning, geospatial GPS navigation, and inventory management with an accessible, user-friendly light theme.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
