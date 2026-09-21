@@ -33,6 +33,7 @@ interface OpsDashboardProps {
   onSelectConvoy: (convoyId: string) => void;
   onUpdateConvoy?: (convoy: ConvoyUnit) => void;
   onOpenDatabaseSync?: () => void;
+  onRefreshDatabase?: () => void;
   isDatabaseRlsBlocked?: boolean;
 }
 
@@ -45,6 +46,7 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
   onSelectConvoy,
   onUpdateConvoy,
   onOpenDatabaseSync,
+  onRefreshDatabase,
   isDatabaseRlsBlocked = false,
 }) => {
   const [logFilter, setLogFilter] = useState<string>('all');
@@ -357,6 +359,21 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
             <span className="text-xs font-semibold font-mono text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
               {convoys.length} CONVOY{convoys.length !== 1 ? 'S' : ''} ACTIVE
             </span>
+            {onRefreshDatabase && (
+              <button
+                type="button"
+                id="convoys-pull-fresh-btn"
+                onClick={() => {
+                  soundManager.playScanBeep();
+                  onRefreshDatabase();
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-mono font-bold px-2.5 py-1 rounded-lg border bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 transition-colors shadow-xs active:scale-95"
+                title="Immediately pull fresh convoy and cargo updates from Supabase"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-sky-600" />
+                <span>PULL DB</span>
+              </button>
+            )}
             {onOpenDatabaseSync && (
               <button
                 type="button"

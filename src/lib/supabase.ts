@@ -84,137 +84,185 @@ export interface SupabaseHealthReport {
 }
 
 export const SUPABASE_CONVOYS_ONLY_SQL = `-- =======================================================
--- BHARATI POLAR OPS - CONVOYS TABLE SETUP & REALTIME FIX
+-- BHARATI POLAR OPS - FAIL-SAFE CONVOYS TABLE & REALTIME
+-- Run this in Supabase SQL Editor to enable read, write, and realtime.
 -- =======================================================
 
--- 1. Create convoys table with all standard columns and aliases
-CREATE TABLE IF NOT EXISTS convoys (
+-- 1. Create table if not present
+CREATE TABLE IF NOT EXISTS public.convoys (
   id TEXT PRIMARY KEY,
-  convoy_name TEXT,
   name TEXT,
-  vehicle_type TEXT,
+  convoy_name TEXT,
   type TEXT,
-  crew_count INTEGER DEFAULT 2,
-  lead_name TEXT,
+  vehicle_type TEXT,
   lead TEXT,
-  status TEXT DEFAULT 'EN ROUTE',
-  speed_kmh NUMERIC DEFAULT 14,
+  lead_name TEXT,
+  crew_count INTEGER DEFAULT 2,
+  status TEXT DEFAULT 'en_route',
   speed TEXT DEFAULT '14 km/h',
+  speed_kmh NUMERIC DEFAULT 14,
+  fuel INTEGER DEFAULT 85,
   fuel_reserve_percent NUMERIC DEFAULT 85,
+  cabin_temp NUMERIC DEFAULT 18.0,
   cabin_temperature NUMERIC DEFAULT 18.0,
+  ext_temp NUMERIC DEFAULT -38.4,
+  heading TEXT DEFAULT '142° SE',
   destination TEXT DEFAULT 'Bharati Depot B-04',
-  eta_minutes INTEGER DEFAULT 32,
-  dispatch_log TEXT,
-  notes TEXT,
+  eta_minutes INTEGER DEFAULT 30,
+  eta TEXT DEFAULT '30 min',
+  notes TEXT DEFAULT '',
+  dispatch_log TEXT DEFAULT '',
   latitude NUMERIC DEFAULT -69.4205,
   longitude NUMERIC DEFAULT 76.2338,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  coord_x NUMERIC DEFAULT 50,
+  coord_y NUMERIC DEFAULT 50,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. Safely add columns if the table already existed with fewer fields
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS convoy_name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS vehicle_type TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS type TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS crew_count INTEGER DEFAULT 2;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS lead_name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS lead TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'EN ROUTE';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS speed_kmh NUMERIC DEFAULT 14;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS speed TEXT DEFAULT '14 km/h';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS fuel_reserve_percent NUMERIC DEFAULT 85;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS cabin_temperature NUMERIC DEFAULT 18.0;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT 'Bharati Depot B-04';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS eta_minutes INTEGER DEFAULT 32;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS dispatch_log TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS notes TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS latitude NUMERIC DEFAULT -69.4205;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS longitude NUMERIC DEFAULT 76.2338;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- 2. Ensure all columns exist even if the table already existed before
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS convoy_name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS vehicle_type TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS lead TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS lead_name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS crew_count INTEGER DEFAULT 2;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'en_route';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS speed TEXT DEFAULT '14 km/h';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS speed_kmh NUMERIC DEFAULT 14;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS fuel INTEGER DEFAULT 85;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS fuel_reserve_percent NUMERIC DEFAULT 85;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS cabin_temp NUMERIC DEFAULT 18.0;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS cabin_temperature NUMERIC DEFAULT 18.0;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS ext_temp NUMERIC DEFAULT -38.4;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS heading TEXT DEFAULT '142° SE';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT 'Bharati Depot B-04';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS eta_minutes INTEGER DEFAULT 30;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS eta TEXT DEFAULT '30 min';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS dispatch_log TEXT DEFAULT '';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS latitude NUMERIC DEFAULT -69.4205;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS longitude NUMERIC DEFAULT 76.2338;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS coord_x NUMERIC DEFAULT 50;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS coord_y NUMERIC DEFAULT 50;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- 3. Enable RLS and grant full public anonymous read & write access
-ALTER TABLE convoys ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow anon all on convoys" ON convoys;
-CREATE POLICY "Allow anon all on convoys" 
-ON convoys FOR ALL TO anon 
-USING (true) WITH CHECK (true);
+-- 3. Synchronize alias columns
+UPDATE public.convoys SET
+  name = COALESCE(name, convoy_name, 'Field Convoy'),
+  convoy_name = COALESCE(convoy_name, name, 'Field Convoy'),
+  lead = COALESCE(lead, lead_name, 'Station Lead'),
+  lead_name = COALESCE(lead_name, lead, 'Station Lead'),
+  type = COALESCE(type, vehicle_type, 'Traverse Unit'),
+  vehicle_type = COALESCE(vehicle_type, type, 'Traverse Unit'),
+  notes = COALESCE(notes, dispatch_log, ''),
+  dispatch_log = COALESCE(dispatch_log, notes, '');
 
--- 4. Enable Supabase Realtime publication for convoys
+-- 4. Enable Row Level Security and allow full anonymous/authenticated access
+ALTER TABLE public.convoys ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "convoys_all_policy" ON public.convoys;
+DROP POLICY IF EXISTS "Allow anon all on convoys" ON public.convoys;
+DROP POLICY IF EXISTS "Allow anon read convoys" ON public.convoys;
+DROP POLICY IF EXISTS "Allow anon insert convoys" ON public.convoys;
+DROP POLICY IF EXISTS "Allow anon update convoys" ON public.convoys;
+
+CREATE POLICY "convoys_all_policy" 
+ON public.convoys 
+FOR ALL 
+TO anon, authenticated 
+USING (true) 
+WITH CHECK (true);
+
+-- 5. Enable Supabase Realtime replication (safe execution)
+ALTER TABLE public.convoys REPLICA IDENTITY FULL;
+
 DO $$
 BEGIN
-  BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE convoys;
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.convoys;
+EXCEPTION WHEN OTHERS THEN
+  -- Already added or restricted by role
+  NULL;
 END $$;
 
--- 5. Seed initial field convoys if not present
-INSERT INTO convoys (id, convoy_name, name, vehicle_type, type, crew_count, lead_name, lead, status, speed_kmh, speed, fuel_reserve_percent, cabin_temperature, destination, eta_minutes, dispatch_log, notes, latitude, longitude)
+-- 6. Insert initial field convoys if table is empty
+INSERT INTO public.convoys (id, name, convoy_name, type, vehicle_type, lead, lead_name, status, speed, speed_kmh, fuel, fuel_reserve_percent, cabin_temp, notes, destination, eta_minutes)
 VALUES 
-  ('convoy-alpha', 'Convoy Alpha (PB100)', 'Convoy Alpha (PB100)', 'PistonBully PB100', 'PistonBully PB100', 3, 'Dr. Sarah Chen', 'Dr. Sarah Chen', 'EN ROUTE', 14, '14 km/h', 85, 18.0, 'Bharati Depot B-04', 32, 'Route 4B clear. Ice fracture flagged at Waypoint 12. Proceeding at standard velocity.', 'Route 4B clear. Ice fracture flagged at Waypoint 12. Proceeding at standard velocity.', -69.4205, 76.2338),
-  ('convoy-bravo', 'Convoy Bravo (Heavy Sled)', 'Convoy Bravo (Heavy Sled)', 'Caterpillar Challenger', 'Caterpillar Challenger', 2, 'Eng. Marcus Vance', 'Eng. Marcus Vance', 'EN ROUTE', 11, '11 km/h', 92, 19.5, 'Bharati Depot B-04', 58, 'Heavy drill rig transit. Sled stabilizers engaged. Temperature holding nominal.', 'Heavy drill rig transit. Sled stabilizers engaged. Temperature holding nominal.', -69.4610, 76.1950)
-ON CONFLICT (id) DO UPDATE SET
-  status = EXCLUDED.status,
-  updated_at = NOW();`;
+  ('convoy-alpha', 'Convoy Alpha (PB100)', 'Convoy Alpha (PB100)', 'PistonBully PB100', 'PistonBully PB100', 'Dr. Sarah Chen', 'Dr. Sarah Chen', 'en_route', '14 km/h', 14, 85, 85, 18.0, 'Route 4B clear. Proceeding at standard velocity.', 'Bharati Depot B-04', 32),
+  ('convoy-bravo', 'Convoy Bravo (Heavy Sled)', 'Convoy Bravo (Heavy Sled)', 'Caterpillar Challenger', 'Caterpillar Challenger', 'Eng. Marcus Vance', 'Eng. Marcus Vance', 'en_route', '11 km/h', 11, 92, 92, 19.5, 'Heavy drill rig transit. Sled stabilizers engaged.', 'Bharati Depot B-04', 58),
+  ('convoy-echo', 'Snowcat Echo (Challenger)', 'Snowcat Echo (Challenger)', 'Caterpillar Challenger', 'Caterpillar Challenger', 'M. Kowalski', 'M. Kowalski', 'hold', '0 km/h', 0, 44, 44, 16.0, 'Held at Skiway 04/22 threshold due to whiteout squall.', 'Skiway 04/22 Depot', 0)
+ON CONFLICT (id) DO UPDATE SET updated_at = NOW();`;
 
 export const SUPABASE_FULL_SCHEMA_SQL = `-- =======================================================
--- BHARATI POLAR OPS - FULL DATABASE SCHEMA & RLS SETUP
+-- BHARATI POLAR OPS - COMPLETE DATABASE SCHEMA SETUP
+-- Creates: convoys, cargo_manifest, station_logs
 -- =======================================================
 
--- 1. CONVOYS & TRAVERSES TABLE
-CREATE TABLE IF NOT EXISTS convoys (
+-- 1. CONVOYS TABLE
+CREATE TABLE IF NOT EXISTS public.convoys (
   id TEXT PRIMARY KEY,
-  convoy_name TEXT,
   name TEXT,
-  vehicle_type TEXT,
+  convoy_name TEXT,
   type TEXT,
-  crew_count INTEGER DEFAULT 2,
-  lead_name TEXT,
+  vehicle_type TEXT,
   lead TEXT,
-  status TEXT DEFAULT 'EN ROUTE',
-  speed_kmh NUMERIC DEFAULT 14,
+  lead_name TEXT,
+  crew_count INTEGER DEFAULT 2,
+  status TEXT DEFAULT 'en_route',
   speed TEXT DEFAULT '14 km/h',
+  speed_kmh NUMERIC DEFAULT 14,
+  fuel INTEGER DEFAULT 85,
   fuel_reserve_percent NUMERIC DEFAULT 85,
+  cabin_temp NUMERIC DEFAULT 18.0,
   cabin_temperature NUMERIC DEFAULT 18.0,
+  ext_temp NUMERIC DEFAULT -38.4,
+  heading TEXT DEFAULT '142° SE',
   destination TEXT DEFAULT 'Bharati Depot B-04',
-  eta_minutes INTEGER DEFAULT 32,
-  dispatch_log TEXT,
-  notes TEXT,
+  eta_minutes INTEGER DEFAULT 30,
+  eta TEXT DEFAULT '30 min',
+  notes TEXT DEFAULT '',
+  dispatch_log TEXT DEFAULT '',
   latitude NUMERIC DEFAULT -69.4205,
   longitude NUMERIC DEFAULT 76.2338,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  coord_x NUMERIC DEFAULT 50,
+  coord_y NUMERIC DEFAULT 50,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS convoy_name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS vehicle_type TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS type TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS crew_count INTEGER DEFAULT 2;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS lead_name TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS lead TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'EN ROUTE';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS speed_kmh NUMERIC DEFAULT 14;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS speed TEXT DEFAULT '14 km/h';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS fuel_reserve_percent NUMERIC DEFAULT 85;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS cabin_temperature NUMERIC DEFAULT 18.0;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT 'Bharati Depot B-04';
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS eta_minutes INTEGER DEFAULT 32;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS dispatch_log TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS notes TEXT;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS latitude NUMERIC DEFAULT -69.4205;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS longitude NUMERIC DEFAULT 76.2338;
-ALTER TABLE convoys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS convoy_name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS vehicle_type TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS lead TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS lead_name TEXT;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS crew_count INTEGER DEFAULT 2;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'en_route';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS speed TEXT DEFAULT '14 km/h';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS speed_kmh NUMERIC DEFAULT 14;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS fuel INTEGER DEFAULT 85;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS fuel_reserve_percent NUMERIC DEFAULT 85;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS cabin_temp NUMERIC DEFAULT 18.0;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS cabin_temperature NUMERIC DEFAULT 18.0;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS ext_temp NUMERIC DEFAULT -38.4;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS heading TEXT DEFAULT '142° SE';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT 'Bharati Depot B-04';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS eta_minutes INTEGER DEFAULT 30;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS eta TEXT DEFAULT '30 min';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS dispatch_log TEXT DEFAULT '';
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS latitude NUMERIC DEFAULT -69.4205;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS longitude NUMERIC DEFAULT 76.2338;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS coord_x NUMERIC DEFAULT 50;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS coord_y NUMERIC DEFAULT 50;
+ALTER TABLE public.convoys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
-ALTER TABLE convoys ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow anon all on convoys" ON convoys;
-CREATE POLICY "Allow anon all on convoys" 
-ON convoys FOR ALL TO anon 
-USING (true) WITH CHECK (true);
+ALTER TABLE public.convoys ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "convoys_all_policy" ON public.convoys;
+CREATE POLICY "convoys_all_policy" ON public.convoys FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+ALTER TABLE public.convoys REPLICA IDENTITY FULL;
 
 -- 2. CARGO MANIFEST TABLE
-CREATE TABLE IF NOT EXISTS cargo_manifest (
+CREATE TABLE IF NOT EXISTS public.cargo_manifest (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -232,14 +280,13 @@ CREATE TABLE IF NOT EXISTS cargo_manifest (
   synced BOOLEAN DEFAULT true
 );
 
-ALTER TABLE cargo_manifest ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow anon all on cargo_manifest" ON cargo_manifest;
-CREATE POLICY "Allow anon all on cargo_manifest" 
-ON cargo_manifest FOR ALL TO anon 
-USING (true) WITH CHECK (true);
+ALTER TABLE public.cargo_manifest ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "cargo_all_policy" ON public.cargo_manifest;
+CREATE POLICY "cargo_all_policy" ON public.cargo_manifest FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+ALTER TABLE public.cargo_manifest REPLICA IDENTITY FULL;
 
 -- 3. STATION LOGS TABLE
-CREATE TABLE IF NOT EXISTS station_logs (
+CREATE TABLE IF NOT EXISTS public.station_logs (
   id TEXT PRIMARY KEY,
   time TEXT,
   type TEXT,
@@ -250,45 +297,35 @@ CREATE TABLE IF NOT EXISTS station_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE station_logs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow anon all on station_logs" ON station_logs;
-CREATE POLICY "Allow anon all on station_logs" 
-ON station_logs FOR ALL TO anon 
-USING (true) WITH CHECK (true);
+ALTER TABLE public.station_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "logs_all_policy" ON public.station_logs;
+CREATE POLICY "logs_all_policy" ON public.station_logs FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- 4. ENABLE REALTIME REPLICATION (For live updates across all clients)
+-- 4. REALTIME REGISTRATION
 DO $$
 BEGIN
-  BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE convoys;
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
-  BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE cargo_manifest;
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
-  BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE station_logs;
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.convoys;
+EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
--- 5. SEED INITIAL FIELD CONVOYS
-INSERT INTO convoys (id, convoy_name, name, vehicle_type, type, crew_count, lead_name, lead, status, speed_kmh, speed, fuel_reserve_percent, cabin_temperature, destination, eta_minutes, dispatch_log, notes, latitude, longitude)
-VALUES 
-  ('convoy-alpha', 'Convoy Alpha (PB100)', 'Convoy Alpha (PB100)', 'PistonBully PB100', 'PistonBully PB100', 3, 'Dr. Sarah Chen', 'Dr. Sarah Chen', 'EN ROUTE', 14, '14 km/h', 85, 18.0, 'Bharati Depot B-04', 32, 'Route 4B clear. Ice fracture flagged at Waypoint 12. Proceeding at standard velocity.', 'Route 4B clear. Ice fracture flagged at Waypoint 12. Proceeding at standard velocity.', -69.4205, 76.2338),
-  ('convoy-bravo', 'Convoy Bravo (Heavy Sled)', 'Convoy Bravo (Heavy Sled)', 'Caterpillar Challenger', 'Caterpillar Challenger', 2, 'Eng. Marcus Vance', 'Eng. Marcus Vance', 'EN ROUTE', 11, '11 km/h', 92, 19.5, 'Bharati Depot B-04', 58, 'Heavy drill rig transit. Sled stabilizers engaged. Temperature holding nominal.', 'Heavy drill rig transit. Sled stabilizers engaged. Temperature holding nominal.', -69.4610, 76.1950)
-ON CONFLICT (id) DO UPDATE SET
-  status = EXCLUDED.status,
-  updated_at = NOW();`;
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.cargo_manifest;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
-export const SUPABASE_RLS_POLICY_SQL = SUPABASE_FULL_SCHEMA_SQL;
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.station_logs;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;`;
 
-export const SUPABASE_DISABLE_RLS_SQL = `-- Quickest Fix: Disable Row Level Security on app tables
-CREATE TABLE IF NOT EXISTS convoys (id TEXT PRIMARY KEY, convoy_name TEXT, status TEXT);
-ALTER TABLE cargo_manifest DISABLE ROW LEVEL SECURITY;
-ALTER TABLE station_logs DISABLE ROW LEVEL SECURITY;
-ALTER TABLE convoys DISABLE ROW LEVEL SECURITY;`;
+export const SUPABASE_RLS_POLICY_SQL = SUPABASE_CONVOYS_ONLY_SQL;
+
+export const SUPABASE_DISABLE_RLS_SQL = `-- 1-Click Solution: Disable Row Level Security on all operational tables
+ALTER TABLE public.convoys DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cargo_manifest DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.station_logs DISABLE ROW LEVEL SECURITY;`;
 
 /**
  * Diagnostic Health Check: verifies connection, table existence, read, and write permissions.
@@ -667,9 +704,32 @@ export async function logEventToSupabase(log: LogEvent): Promise<{
 }
 
 /**
+ * Map Supabase cargo_manifest row to application CargoItem
+ */
+export function mapRowToCargo(row: any): CargoItem {
+  return {
+    id: String(row.id),
+    code: row.code || 'CRG-???',
+    title: row.title || row.name || 'Polar Cargo',
+    category: row.category || 'equipment',
+    hazmatClass: row.hazmat_class ?? row.hazmatClass ?? null,
+    unCode: row.un_code ?? row.unCode ?? null,
+    spec: row.spec || '',
+    origin: row.origin || 'Port Dock',
+    destination: row.destination || 'Bharati Depot B-04',
+    program: row.program || 'Logistics',
+    currentStep: Number(row.current_step ?? row.currentStep) || 1,
+    totalSteps: Number(row.total_steps ?? row.totalSteps) || 5,
+    condition: row.condition || 'nominal',
+    loggedTime: row.logged_time || row.loggedTime || new Date().toISOString(),
+    synced: true,
+  };
+}
+
+/**
  * Load initial cargo records from Supabase or local offline storage
  */
-export async function loadCargoFromSupabase(): Promise<CargoItem[]> {
+export async function loadCargoFromSupabase(forceCloud = false): Promise<CargoItem[]> {
   const client = getSupabaseClient();
 
   if (client) {
@@ -680,23 +740,13 @@ export async function loadCargoFromSupabase(): Promise<CargoItem[]> {
         .order('current_step', { ascending: false });
 
       if (!error && data && data.length > 0) {
-        return data.map((row) => ({
-          id: row.id,
-          code: row.code,
-          title: row.title,
-          category: row.category,
-          hazmatClass: row.hazmat_class,
-          unCode: row.un_code,
-          spec: row.spec,
-          origin: row.origin,
-          destination: row.destination,
-          program: row.program,
-          currentStep: Number(row.current_step) || 1,
-          totalSteps: Number(row.total_steps) || 5,
-          condition: row.condition || 'nominal',
-          loggedTime: row.logged_time || new Date().toISOString(),
-          synced: true,
-        }));
+        const mapped = data.map(mapRowToCargo);
+        try {
+          localStorage.setItem(LOCAL_CARGO_KEY, JSON.stringify(mapped));
+        } catch {
+          // ignore
+        }
+        return mapped;
       }
     } catch (err) {
       console.warn('Error loading from Supabase, loading fallback:', err);
@@ -729,7 +779,7 @@ async function resilientUpsert(
 ): Promise<{ success: boolean; error: any }> {
   const payload = { ...row };
 
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     const { error } = await client.from(table).upsert(payload, { onConflict });
     if (!error) {
       return { success: true, error: null };
@@ -756,29 +806,51 @@ async function resilientUpsert(
 }
 
 /**
- * Map Supabase convoys table row to application ConvoyUnit
+ * Map Supabase convoys table row to application ConvoyUnit.
+ * Respects ANY column name edited by the user (short or long name).
  */
 export function mapRowToConvoy(row: any): ConvoyUnit {
-  const rawStatus = (row.status || '').toLowerCase();
+  // Status parsing: recognizes en_route, hold, idle, and natural language variants
+  const rawStatus = String(row.status || '').toLowerCase().trim();
   let status: 'en_route' | 'idle' | 'hold' = 'en_route';
-  if (rawStatus.includes('hold') || rawStatus.includes('held') || rawStatus.includes('weather')) {
+  if (
+    rawStatus.includes('hold') || 
+    rawStatus.includes('held') || 
+    rawStatus.includes('weather') || 
+    rawStatus.includes('stop') || 
+    rawStatus.includes('pause') ||
+    rawStatus.includes('wait') ||
+    rawStatus.includes('delay') ||
+    rawStatus === 'halt'
+  ) {
     status = 'hold';
-  } else if (rawStatus.includes('idle')) {
+  } else if (
+    rawStatus.includes('idle') || 
+    rawStatus === 'base' || 
+    rawStatus === 'parked' ||
+    rawStatus === 'standby'
+  ) {
     status = 'idle';
+  } else {
+    status = 'en_route';
   }
 
+  // Latitude and Longitude parsing
   const rawLat = row.latitude ?? row.lat;
   const rawLon = row.longitude ?? row.lon ?? row.lng;
-  const lat = typeof rawLat === 'number' ? rawLat : parseFloat(rawLat) || -69.42;
-  const lon = typeof rawLon === 'number' ? rawLon : parseFloat(rawLon) || 76.23;
+  const lat = typeof rawLat === 'number' ? rawLat : parseFloat(rawLat) || -69.4205;
+  const lon = typeof rawLon === 'number' ? rawLon : parseFloat(rawLon) || 76.2338;
   const latStr = `${Math.abs(lat).toFixed(4)}°S`;
   const lonStr = `${Math.abs(lon).toFixed(4)}°E`;
 
-  // Calculate coordinates on tactical map
-  // Bounds: Lon [76.10, 76.42] -> X [15%, 85%], Lat [-69.38, -69.50] -> Y [15%, 85%]
+  // Tactical Map percentage coordinates (X, Y in % bounds 10..90)
   let x = 50;
   let y = 50;
-  if (!isNaN(lon) && !isNaN(lat)) {
+  if (row.coord_x !== undefined && row.coord_x !== null && !isNaN(Number(row.coord_x))) {
+    x = Math.max(5, Math.min(95, Number(row.coord_x)));
+  } else if (row.x !== undefined && row.x !== null && !isNaN(Number(row.x))) {
+    x = Math.max(5, Math.min(95, Number(row.x)));
+  } else if (!isNaN(lon) && !isNaN(lat)) {
     const lonMin = 76.10;
     const lonMax = 76.42;
     const latMin = -69.50;
@@ -789,18 +861,79 @@ export function mapRowToConvoy(row: any): ConvoyUnit {
     y = Math.max(10, Math.min(90, Math.round(normY * 70 + 15)));
   }
 
-  const speedVal = row.speed_kmh ?? row.speed ?? row.ground_speed ?? 0;
-  const speedStr = typeof speedVal === 'string' && speedVal.includes('km/h') ? speedVal : `${speedVal} km/h`;
-  const etaMinutes = Number(row.eta_minutes ?? row.eta_min ?? row.eta) || 30;
-  const speedNum = parseFloat(speedStr) || 12;
-  const distanceKm = parseFloat(((etaMinutes * speedNum) / 60).toFixed(1)) || 4.5;
+  if (row.coord_y !== undefined && row.coord_y !== null && !isNaN(Number(row.coord_y))) {
+    y = Math.max(5, Math.min(95, Number(row.coord_y)));
+  } else if (row.y !== undefined && row.y !== null && !isNaN(Number(row.y))) {
+    y = Math.max(5, Math.min(95, Number(row.y)));
+  }
 
-  const convoyName = row.convoy_name || row.name || row.title || 'Field Convoy';
-  const vehicleType = row.vehicle_type || row.type || row.vehicle || 'PistonBully PB100';
-  const leadName = row.lead_name || row.lead || row.leader || 'Expedition Lead';
-  const fuelReserve = Number(row.fuel_reserve_percent ?? row.fuel_pct ?? row.fuel) || 100;
-  const cabinTemp = Number(row.cabin_temperature ?? row.cabin_temp) || 18;
-  const dispatchLog = row.dispatch_log || row.notes || row.log || '';
+  // Speed parsing: handles "14 km/h", "14", 14, 0
+  let speedStr = '14 km/h';
+  if (row.speed !== undefined && row.speed !== null && String(row.speed).trim() !== '') {
+    const s = String(row.speed).trim();
+    speedStr = s.toLowerCase().includes('km/h') ? s : `${s} km/h`;
+  } else if (row.speed_kmh !== undefined && row.speed_kmh !== null && !isNaN(Number(row.speed_kmh))) {
+    speedStr = `${row.speed_kmh} km/h`;
+  } else if (row.ground_speed !== undefined && row.ground_speed !== null) {
+    speedStr = `${row.ground_speed} km/h`;
+  }
+
+  // ETA minutes parsing (safely handles 0)
+  const rawEta = row.eta_minutes ?? row.eta_min ?? row.eta;
+  let etaMinutes = 30;
+  if (rawEta !== undefined && rawEta !== null) {
+    if (typeof rawEta === 'number' && !isNaN(rawEta)) {
+      etaMinutes = rawEta;
+    } else {
+      const parsed = parseFloat(String(rawEta));
+      if (!isNaN(parsed)) etaMinutes = Math.round(parsed);
+    }
+  }
+
+  const speedNum = parseFloat(speedStr) || 12;
+  const rawDist = row.distance_to_depot_km ?? row.distance_km ?? row.distance;
+  const distanceKm = rawDist !== undefined && rawDist !== null && !isNaN(Number(rawDist))
+    ? Number(rawDist)
+    : parseFloat(((etaMinutes * speedNum) / 60).toFixed(1)) || 4.5;
+
+  // Name, Type, and Lead: check both short and long column aliases
+  const convoyName = row.name || row.convoy_name || row.title || 'Field Convoy';
+  const vehicleType = row.type || row.vehicle_type || row.vehicle || 'PistonBully PB100';
+  const leadName = row.lead || row.lead_name || row.leader || 'Dr. Sarah Chen';
+
+  // Fuel parsing (safely handle 0% fuel)
+  let fuelReserve = 85;
+  const rawFuel = row.fuel ?? row.fuel_reserve_percent ?? row.fuel_pct ?? row.battery;
+  if (rawFuel !== undefined && rawFuel !== null && !isNaN(Number(rawFuel))) {
+    fuelReserve = Math.max(0, Math.min(100, Math.round(Number(rawFuel))));
+  }
+
+  // Cabin Temperature (safely handle 0°C or negative numbers)
+  let cabinTemp = 18;
+  const rawCabin = row.cabin_temp ?? row.cabin_temperature ?? row.cabinTemp;
+  if (rawCabin !== undefined && rawCabin !== null && !isNaN(Number(rawCabin))) {
+    cabinTemp = Number(rawCabin);
+  }
+
+  // External / Ambient Temperature
+  let extTemp = -38.4;
+  const rawExt = row.ext_temp ?? row.extTemp ?? row.outside_temp ?? row.ambient_temp ?? row.temp;
+  if (rawExt !== undefined && rawExt !== null && !isNaN(Number(rawExt))) {
+    extTemp = Number(rawExt);
+  }
+
+  // Crew Count (safely handle 0 or 1)
+  let crewCount = 2;
+  const rawCrew = row.crew_count ?? row.crew ?? row.crewCount;
+  if (rawCrew !== undefined && rawCrew !== null && !isNaN(Number(rawCrew))) {
+    crewCount = Math.max(0, Math.round(Number(rawCrew)));
+  }
+
+  // Heading & Direction
+  const headingStr = row.heading || row.heading_direction || row.bearing || '142° SE';
+
+  // Notes & Dispatch Log
+  const dispatchLog = row.notes ?? row.dispatch_log ?? row.log ?? row.description ?? '';
 
   return {
     id: String(row.id),
@@ -809,12 +942,12 @@ export function mapRowToConvoy(row: any): ConvoyUnit {
     status,
     coordinates: `${latStr} • ${lonStr}`,
     speed: speedStr,
-    heading: '142° SE',
-    crewCount: Number(row.crew_count ?? row.crew) || 1,
+    heading: headingStr,
+    crewCount,
     lead: leadName,
     fuelPct: fuelReserve,
-    cabinTemp: cabinTemp,
-    extTemp: -38.4,
+    cabinTemp,
+    extTemp,
     distanceToDepotKm: distanceKm,
     etaMin: etaMinutes,
     notes: dispatchLog,
@@ -824,7 +957,7 @@ export function mapRowToConvoy(row: any): ConvoyUnit {
 }
 
 /**
- * Map ConvoyUnit to Supabase table row (with column aliases for maximum compatibility)
+ * Map ConvoyUnit to Supabase table row (synchronizes all short and long column aliases)
  */
 export function mapConvoyToRow(convoy: ConvoyUnit): Record<string, any> {
   const speedNum = parseFloat(convoy.speed) || 0;
@@ -841,31 +974,38 @@ export function mapConvoyToRow(convoy: ConvoyUnit): Record<string, any> {
   }
 
   const statusText = convoy.status === 'hold' 
-    ? 'HELD FOR WEATHER' 
+    ? 'hold' 
     : convoy.status === 'idle' 
-    ? 'IDLE' 
-    : 'EN ROUTE';
+    ? 'idle' 
+    : 'en_route';
 
   return {
     id: convoy.id,
-    convoy_name: convoy.name,
     name: convoy.name,
-    vehicle_type: convoy.type,
+    convoy_name: convoy.name,
     type: convoy.type,
-    crew_count: convoy.crewCount,
-    lead_name: convoy.lead,
+    vehicle_type: convoy.type,
     lead: convoy.lead,
+    lead_name: convoy.lead,
+    crew_count: convoy.crewCount,
     status: statusText,
-    speed_kmh: speedNum,
     speed: convoy.speed,
+    speed_kmh: speedNum,
+    fuel: convoy.fuelPct,
     fuel_reserve_percent: convoy.fuelPct,
+    cabin_temp: convoy.cabinTemp,
     cabin_temperature: convoy.cabinTemp,
+    ext_temp: convoy.extTemp,
+    heading: convoy.heading,
     destination: 'Bharati Depot B-04',
     eta_minutes: convoy.etaMin,
-    dispatch_log: convoy.notes,
+    eta: `${convoy.etaMin} min`,
     notes: convoy.notes,
+    dispatch_log: convoy.notes,
     latitude,
     longitude,
+    coord_x: convoy.x,
+    coord_y: convoy.y,
     updated_at: new Date().toISOString(),
   };
 }
@@ -916,10 +1056,6 @@ export async function loadConvoysFromSupabase(forceCloud = false): Promise<Convo
     }
   }
 
-  if (forceCloud) {
-    return [];
-  }
-
   // Fallback to local storage or defaults
   try {
     const cached = localStorage.getItem(LOCAL_CONVOYS_KEY);
@@ -955,7 +1091,15 @@ export async function fetchConvoysWithDiagnostics(): Promise<{
   }
 
   try {
-    const { data, error } = await client.from('convoys').select('*');
+    let { data, error } = await client.from('convoys').select('*');
+    if (error) {
+      const alt = await client.from('convoy').select('*');
+      if (!alt.error && alt.data) {
+        data = alt.data;
+        error = null;
+      }
+    }
+
     if (!error && data) {
       if (data.length > 0) {
         const mapped = data.map(mapRowToConvoy);
@@ -1021,7 +1165,15 @@ export async function syncConvoyToSupabase(convoy: ConvoyUnit): Promise<{
   if (client) {
     try {
       const row = mapConvoyToRow(convoy);
-      const res = await resilientUpsert(client, 'convoys', row, 'id');
+      let res = await resilientUpsert(client, 'convoys', row, 'id');
+
+      if (!res.success && res.error && (res.error.code === '42P01' || res.error.message?.includes('does not exist'))) {
+        // Retry with singular 'convoy' table
+        const altRes = await resilientUpsert(client, 'convoy', row, 'id');
+        if (altRes.success) {
+          res = altRes;
+        }
+      }
 
       if (res.success) {
         return { success: true, source: 'supabase' };
@@ -1069,10 +1221,16 @@ export async function seedAllConvoysToSupabase(convoysList: ConvoyUnit[]): Promi
 
   let successCount = 0;
   let lastError: any = null;
+  let targetTable = 'convoys';
 
   for (const convoy of convoysList) {
     const row = mapConvoyToRow(convoy);
-    const res = await resilientUpsert(client, 'convoys', row, 'id');
+    let res = await resilientUpsert(client, targetTable, row, 'id');
+    if (!res.success && res.error && (res.error.code === '42P01' || res.error.message?.includes('does not exist'))) {
+      targetTable = 'convoy';
+      res = await resilientUpsert(client, targetTable, row, 'id');
+    }
+
     if (res.success) {
       successCount++;
     } else {
@@ -1121,24 +1279,8 @@ export function subscribeToSupabaseRealtime(
         (payload) => {
           if (payload.new && typeof payload.new === 'object') {
             const row = payload.new as any;
-            if (row.id && row.title) {
-              onCargoChange({
-                id: row.id,
-                code: row.code || 'CRG-???',
-                title: row.title,
-                category: row.category || 'general',
-                hazmatClass: row.hazmat_class || null,
-                unCode: row.un_code || null,
-                spec: row.spec || '',
-                origin: row.origin || 'Port Dock',
-                destination: row.destination || 'Main Station',
-                program: row.program || 'Logistics',
-                currentStep: Number(row.current_step) || 1,
-                totalSteps: Number(row.total_steps) || 5,
-                condition: row.condition || 'nominal',
-                loggedTime: row.logged_time || new Date().toISOString(),
-                synced: true,
-              });
+            if (row.id) {
+              onCargoChange(mapRowToCargo(row));
             }
           }
         }
@@ -1165,7 +1307,6 @@ export function subscribeToSupabaseRealtime(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'convoys' },
         (payload) => {
-          console.log('[Supabase Realtime] Convoys table event:', payload.eventType, payload);
           if (payload.new && typeof payload.new === 'object') {
             const row = payload.new as any;
             if (row.id && onConvoyChange) {
@@ -1178,7 +1319,6 @@ export function subscribeToSupabaseRealtime(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'convoy' },
         (payload) => {
-          console.log('[Supabase Realtime] Convoy (alt) table event:', payload.eventType, payload);
           if (payload.new && typeof payload.new === 'object') {
             const row = payload.new as any;
             if (row.id && onConvoyChange) {
@@ -1187,7 +1327,13 @@ export function subscribeToSupabaseRealtime(
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Supabase Realtime] Connected to live postgres changes.');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('[Supabase Realtime] Channel error. Will fallback to active polling.');
+        }
+      });
 
     return () => {
       client.removeChannel(channel);

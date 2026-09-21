@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { LandingPage } from './components/LandingPage';
@@ -51,6 +51,10 @@ export default function App() {
   const [isDatabaseRlsBlocked, setIsDatabaseRlsBlocked] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+  };
+
   // Auto dismiss toast
   useEffect(() => {
     if (toastMessage) {
@@ -61,7 +65,64 @@ export default function App() {
     }
   }, [toastMessage]);
 
-  // Load persistent cargo state and diagnostics on mount
+  // Core synchronization: pulls fresh data from Supabase and applies updates seamlessly
+  const refreshDatabaseData = useCallback(async (notify = false) => {
+    try {
+      const [freshCargo, freshConvoys] = await Promise.all([
+        loadCargoFromSupabase(true),
+        loadConvoysFromSupabase(true),
+      ]);
+
+      if (freshConvoys && freshConvoys.length > 0) {
+        setConvoys((prev) => {
+          const prevStr = JSON.stringify(prev);
+          const freshStr = JSON.stringify(freshConvoys);
+          if (prevStr !== freshStr) {
+            if (notify) showToast('Active convoys updated from database');
+            return freshConvoys;
+          }
+          return prev;
+        });
+      }
+
+      if (freshCargo && freshCargo.length > 0) {
+        setCargoList((prev) => {
+          const prevStr = JSON.stringify(prev);
+          const freshStr = JSON.stringify(freshCargo);
+          if (prevStr !== freshStr) {
+            if (notify) showToast('Cargo manifest updated from database');
+            return freshCargo;
+          }
+          return prev;
+        });
+      }
+
+      if (notify) {
+        showToast('Database synchronization confirmed.');
+      }
+    } catch (err) {
+      console.warn('Error during manual/periodic refresh:', err);
+    }
+  }, []);
+
+  // Window focus listener: immediately fetches latest data when user returns from Supabase SQL or Table Editor
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      refreshDatabaseData(false);
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
+  }, [refreshDatabaseData]);
+
+  // Active poll every 4 seconds: guarantees that changes made in Supabase dashboard show up automatically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshDatabaseData(false);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [refreshDatabaseData]);
+
+  // Initial load and Realtime WebSocket subscription
   useEffect(() => {
     // 1. Diagnostics check for RLS
     checkSupabaseHealth().then((report) => {
@@ -71,7 +132,7 @@ export default function App() {
       }
     });
 
-    // 2. Load cargo data from Supabase
+    // 2. Initial cargo load
     loadCargoFromSupabase().then((loaded) => {
       if (loaded && loaded.length > 0) {
         setCargoList(loaded);
@@ -79,14 +140,14 @@ export default function App() {
       }
     });
 
-    // 2b. Load convoys data from Supabase
+    // 2b. Initial convoys load
     loadConvoysFromSupabase().then((loadedConvoys) => {
       if (loadedConvoys && loadedConvoys.length > 0) {
         setConvoys(loadedConvoys);
       }
     });
 
-    // 3. Subscribe to Real-time database updates
+    // 3. Realtime subscription
     const unsubscribe = subscribeToSupabaseRealtime(
       (updatedCargo) => {
         setCargoList((prev) => {
@@ -117,10 +178,6 @@ export default function App() {
       if (unsubscribe) unsubscribe();
     };
   }, []);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-  };
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -301,6 +358,7 @@ export default function App() {
             }}
             onUpdateConvoy={handleUpdateConvoy}
             onOpenDatabaseSync={() => setIsSupabaseModalOpen(true)}
+            onRefreshDatabase={() => refreshDatabaseData(true)}
             isDatabaseRlsBlocked={isDatabaseRlsBlocked}
           />
         )}
