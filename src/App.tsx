@@ -37,12 +37,12 @@ import {
 } from './lib/supabase';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<TabType>('landing');
+  const [currentTab, setCurrentTab] = useState<TabType>('ops');
   const [weather, setWeather] = useState<WeatherData>(initialWeatherData);
   const [cargoList, setCargoList] = useState<CargoItem[]>(sampleCargoDatabase);
   const [currentScanned, setCurrentScanned] = useState<CargoItem>(sampleCargoDatabase[0]);
   const [convoys, setConvoys] = useState<ConvoyUnit[]>(initialConvoys);
-  const [selectedConvoyId, setSelectedConvoyId] = useState<string>('convoy-alpha');
+  const [selectedConvoyId, setSelectedConvoyId] = useState<string>('0b95d828-b4ed-49a3-9ab5-f931e6e278d1');
   const [inventory, setInventory] = useState<InventorySupply[]>(initialInventory);
   const [logStream, setLogStream] = useState<LogEvent[]>(initialLogStream);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -74,34 +74,30 @@ export default function App() {
       ]);
 
       if (freshConvoys && freshConvoys.length > 0) {
-        setConvoys((prev) => {
-          const prevStr = JSON.stringify(prev);
-          const freshStr = JSON.stringify(freshConvoys);
-          if (prevStr !== freshStr) {
-            if (notify) showToast('Active convoys updated from database');
-            return freshConvoys;
+        setConvoys(freshConvoys);
+        setSelectedConvoyId((currentId) => {
+          if (!freshConvoys.some((c) => c.id === currentId)) {
+            return freshConvoys[0].id;
           }
-          return prev;
+          return currentId;
         });
+        if (notify) {
+          showToast(`⚡ Pulled ${freshConvoys.length} convoys live from Supabase database`);
+        }
       }
 
       if (freshCargo && freshCargo.length > 0) {
-        setCargoList((prev) => {
-          const prevStr = JSON.stringify(prev);
-          const freshStr = JSON.stringify(freshCargo);
-          if (prevStr !== freshStr) {
-            if (notify) showToast('Cargo manifest updated from database');
-            return freshCargo;
-          }
-          return prev;
+        setCargoList(freshCargo);
+        setCurrentScanned((curr) => {
+          const match = freshCargo.find((c) => c.id === curr.id);
+          return match || freshCargo[0];
         });
-      }
-
-      if (notify) {
-        showToast('Database synchronization confirmed.');
       }
     } catch (err) {
       console.warn('Error during manual/periodic refresh:', err);
+      if (notify) {
+        showToast('⚠️ Sync error fetching from Supabase');
+      }
     }
   }, []);
 

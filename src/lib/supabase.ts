@@ -2,9 +2,17 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { CargoItem, ConvoyUnit, InventorySupply, LogEvent } from '../types';
 import { sampleCargoDatabase, initialConvoys, initialInventory, initialLogStream } from '../data/mockData';
 
-// Environment variable extraction
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || '';
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || '';
+// Environment variable extraction with default fallback to active project
+const DEFAULT_SUPABASE_URL = 'https://whbeyjvygbjyzlvfywts.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'sb_publishable_x3dqM4IRCHETQo-GnlwFhw_60TXIZTw';
+
+export const supabaseUrl = 
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
+  DEFAULT_SUPABASE_URL;
+
+export const supabaseAnonKey = 
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
+  DEFAULT_SUPABASE_KEY;
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl && 
@@ -25,8 +33,8 @@ export function getSupabaseClient(): SupabaseClient | null {
     try {
       clientInstance = createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
-          persistSession: true,
-          autoRefreshToken: true,
+          persistSession: false,
+          autoRefreshToken: false,
         },
       });
     } catch (err) {
@@ -730,6 +738,33 @@ export function mapRowToCargo(row: any): CargoItem {
  * Load initial cargo records from Supabase or local offline storage
  */
 export async function loadCargoFromSupabase(forceCloud = false): Promise<CargoItem[]> {
+  // Method 1: Direct HTTP REST fetch
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/cargo_manifest?select=*&order=current_step.desc`, {
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const mapped = data.map(mapRowToCargo);
+        try {
+          localStorage.setItem(LOCAL_CARGO_KEY, JSON.stringify(mapped));
+        } catch {
+          // ignore
+        }
+        return mapped;
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase Cargo Direct REST] Fetch error:', err);
+  }
+
   const client = getSupabaseClient();
 
   if (client) {
@@ -957,7 +992,7 @@ export function mapRowToConvoy(row: any): ConvoyUnit {
 }
 
 /**
- * Map ConvoyUnit to Supabase table row (synchronizes all short and long column aliases)
+ * Map ConvoyUnit to Supabase table row (matches exact database schema)
  */
 export function mapConvoyToRow(convoy: ConvoyUnit): Record<string, any> {
   const speedNum = parseFloat(convoy.speed) || 0;
@@ -974,38 +1009,29 @@ export function mapConvoyToRow(convoy: ConvoyUnit): Record<string, any> {
   }
 
   const statusText = convoy.status === 'hold' 
-    ? 'hold' 
+    ? 'HELD FOR WEATHER' 
     : convoy.status === 'idle' 
-    ? 'idle' 
-    : 'en_route';
+    ? 'IDLE' 
+    : 'EN ROUTE';
 
   return {
     id: convoy.id,
-    name: convoy.name,
     convoy_name: convoy.name,
-    type: convoy.type,
     vehicle_type: convoy.type,
-    lead: convoy.lead,
-    lead_name: convoy.lead,
     crew_count: convoy.crewCount,
+    lead_name: convoy.lead,
     status: statusText,
-    speed: convoy.speed,
     speed_kmh: speedNum,
-    fuel: convoy.fuelPct,
     fuel_reserve_percent: convoy.fuelPct,
-    cabin_temp: convoy.cabinTemp,
     cabin_temperature: convoy.cabinTemp,
-    ext_temp: convoy.extTemp,
-    heading: convoy.heading,
     destination: 'Bharati Depot B-04',
     eta_minutes: convoy.etaMin,
-    eta: `${convoy.etaMin} min`,
-    notes: convoy.notes,
-    dispatch_log: convoy.notes,
+    dispatch_log: convoy.notes || 'Traverse update',
     latitude,
     longitude,
-    coord_x: convoy.x,
-    coord_y: convoy.y,
+    coord_x: convoy.x ?? 68,
+    coord_y: convoy.y ?? 44,
+    distance_to_depot_km: convoy.distanceToDepotKm ?? 4.5,
     updated_at: new Date().toISOString(),
   };
 }
@@ -1014,6 +1040,37 @@ export function mapConvoyToRow(convoy: ConvoyUnit): Record<string, any> {
  * Load field convoys and traverses from Supabase table `convoys`
  */
 export async function loadConvoysFromSupabase(forceCloud = false): Promise<ConvoyUnit[]> {
+  // Method 1: Direct HTTP REST fetch (bypasses browser client session or caching issues)
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/convoys?select=*`, {
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const mapped = data.map(mapRowToConvoy);
+        try {
+          localStorage.setItem(LOCAL_CONVOYS_KEY, JSON.stringify(mapped));
+        } catch {
+          // ignore
+        }
+        console.log(`[Supabase Convoys Direct REST] Successfully loaded ${mapped.length} convoys from cloud.`);
+        return mapped;
+      }
+    } else {
+      console.warn('[Supabase Convoys Direct REST] Response status:', res.status, res.statusText);
+    }
+  } catch (err) {
+    console.warn('[Supabase Convoys Direct REST] Fetch error:', err);
+  }
+
+  // Method 2: Supabase JS Client fallback
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -1038,15 +1095,8 @@ export async function loadConvoysFromSupabase(forceCloud = false): Promise<Convo
           } catch {
             // ignore
           }
-          console.log(`[Supabase Convoys] Successfully loaded ${mapped.length} convoys from cloud.`);
+          console.log(`[Supabase Convoys Client] Successfully loaded ${mapped.length} convoys from cloud.`);
           return mapped;
-        } else {
-          // Table exists in Supabase, but has 0 rows. Auto-seed initial convoys into database!
-          console.log('[Supabase Convoys] Table exists in Supabase with 0 rows. Auto-seeding initial convoys...');
-          seedAllConvoysToSupabase(initialConvoys).catch((seedErr) => {
-            console.warn('[Supabase Convoys] Auto-seed failed:', seedErr);
-          });
-          return initialConvoys;
         }
       } else if (error) {
         console.warn('[Supabase Convoys] Error loading convoys from Supabase:', error.message);
@@ -1080,6 +1130,33 @@ export async function fetchConvoysWithDiagnostics(): Promise<{
   isTableMissing?: boolean;
   isRlsBlocked?: boolean;
 }> {
+  // Try direct REST fetch first
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/convoys?select=*`, {
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const mapped = data.map(mapRowToConvoy);
+        try {
+          localStorage.setItem(LOCAL_CONVOYS_KEY, JSON.stringify(mapped));
+        } catch {
+          // ignore
+        }
+        return { success: true, data: mapped, source: 'supabase' };
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase Diagnostics Direct REST] Fetch error:', err);
+  }
+
   const client = getSupabaseClient();
   if (!client) {
     return {

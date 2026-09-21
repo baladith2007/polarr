@@ -45,6 +45,12 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
     selectedConvoyId || (convoys[0]?.id || 'convoy-alpha')
   );
 
+  React.useEffect(() => {
+    if (selectedConvoyId) {
+      setSelectedEntityKey(selectedConvoyId);
+    }
+  }, [selectedConvoyId]);
+
   const selectedConvoy = convoys.find((c) => c.id === selectedEntityKey) || convoys[0];
 
   const handleEntityClick = (key: string, name: string) => {
