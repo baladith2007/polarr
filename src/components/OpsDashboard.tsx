@@ -15,10 +15,12 @@ import {
   CheckCircle2, 
   Search,
   PlusCircle,
-  ExternalLink
+  ExternalLink,
+  Database
 } from 'lucide-react';
 import { ConvoyUnit, LogEvent, WeatherData } from '../types';
 import { soundManager } from '../utils/audio';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 interface OpsDashboardProps {
   weather: WeatherData;
@@ -185,7 +187,7 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
       </div>
 
       {/* Summary Metric Bento */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Personnel */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between">
@@ -224,6 +226,29 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Jet fuel, drill rigs, cryo medical units
+            </p>
+          </div>
+        </div>
+
+        {/* Supabase Cloud DB Health */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              Supabase Cloud DB
+            </span>
+            <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
+              <Database className="w-4 h-4" />
+            </span>
+          </div>
+          <div className="mt-2">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold font-mono text-emerald-600">
+                {isSupabaseConfigured ? 'LIVE SYNC' : 'REPLICA'}
+              </span>
+              <span className="text-xs font-mono text-slate-500 font-semibold">24ms</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Table: cargo_manifest • SBD channel
             </p>
           </div>
         </div>

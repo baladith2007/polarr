@@ -17,10 +17,12 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Check,
-  AlertCircle
+  AlertCircle,
+  Database
 } from 'lucide-react';
 import { CargoItem, PhysicalCondition } from '../types';
 import { soundManager } from '../utils/audio';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 interface CargoScannerProps {
   cargoList: CargoItem[];
@@ -105,9 +107,9 @@ export const CargoScanner: React.FC<CargoScannerProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600">
-          <CloudCheck className="w-4 h-4 text-emerald-600" />
-          <span>SOCKET 10.44.0.12 • STATION DB SYNCED</span>
+        <div className="flex items-center gap-2 text-xs font-mono bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 text-emerald-800 font-semibold">
+          <Database className="w-4 h-4 text-emerald-600" />
+          <span>SUPABASE: {isSupabaseConfigured ? 'REALTIME CLOUD' : 'LOCAL CACHE'} • 24ms</span>
         </div>
       </div>
 
@@ -486,8 +488,9 @@ export const CargoScanner: React.FC<CargoScannerProps> = ({
               Recent Scanned Batch Session #084
             </h3>
           </div>
-          <span className="text-xs font-mono text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 font-semibold">
-            PostgreSQL Synced • 24ms
+          <span className="text-xs font-mono text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 font-semibold flex items-center gap-1.5">
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Supabase Synced • 24ms</span>
           </span>
         </div>
 

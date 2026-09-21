@@ -108,7 +108,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     },
     {
       q: 'What occurs during a complete satellite blackout or severe catabatic storm?',
-      a: 'All cargo scans, fuel allotments, and checkpoint timestamps write immediately to an offline-first transactional database with tamper-evident hashing. As soon as Iridium SBD (Short Burst Data) or station VHF/HF relays re-establish a handshake, data resynchronizes in milliseconds.',
+      a: 'All cargo scans, fuel allotments, and checkpoint timestamps write immediately to an offline-first transactional database powered by Supabase with tamper-evident cryptographic hashing. As soon as Iridium SBD (Short Burst Data) or station VHF/HF relays re-establish a handshake, data resynchronizes in milliseconds to Supabase cloud tables.',
     },
     {
       q: 'How does the AI Blizzard Depletion Engine predict power plant fuel burn?',
@@ -384,7 +384,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       : 'bg-slate-800 text-slate-400 border-slate-700'
                   }`}>
                     {scanVerified 
-                      ? 'POSTGRESQL AUDIT COMMITTED' 
+                      ? 'SUPABASE CLOUD AUDIT COMMITTED' 
                       : isScanning 
                       ? 'READING CRYOGENIC MATRIX...' 
                       : 'AWAITING OPTICAL TRIGGER'}
@@ -643,7 +643,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {/* Explanatory bullet */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-start gap-3">
               <HardHat className="w-5 h-5 text-sky-600 flex-shrink-0 mt-0.5" />
-              <p leading-relaxed>
+              <p className="leading-relaxed">
                 Antarctic station habitat heating relies on combined heat and power (CHP) generators. As wind chill intensifies, thermal conductivity through module bulkheads doubles, automatically accelerating generator fuel burn.
               </p>
             </div>

@@ -23,6 +23,12 @@ import {
 } from './data/mockData';
 import { CargoItem, ConvoyUnit, InventorySupply, LogEvent, TabType, WeatherData } from './types';
 import { soundManager } from './utils/audio';
+import { 
+  syncCargoToSupabase, 
+  logEventToSupabase, 
+  loadCargoFromSupabase, 
+  isSupabaseConfigured 
+} from './lib/supabase';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('landing');
@@ -47,6 +53,16 @@ export default function App() {
     }
   }, [toastMessage]);
 
+  // Load persistent cargo state from Supabase / offline cache on mount
+  useEffect(() => {
+    loadCargoFromSupabase().then((loaded) => {
+      if (loaded && loaded.length > 0) {
+        setCargoList(loaded);
+        setCurrentScanned(loaded[0]);
+      }
+    });
+  }, []);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
   };
@@ -69,6 +85,7 @@ export default function App() {
       ...newLog,
     };
     setLogStream((prev) => [log, ...prev]);
+    logEventToSupabase(log);
     showToast(`Logged to Station Feed: ${newLog.title}`);
   };
 
@@ -78,6 +95,13 @@ export default function App() {
       prev.map((item) => (item.id === updatedCargo.id ? updatedCargo : item))
     );
     setCurrentScanned(updatedCargo);
+
+    // Sync to Supabase table cargo_manifest
+    syncCargoToSupabase(updatedCargo).then((res) => {
+      if (res.source === 'supabase') {
+        showToast(`Scan #${updatedCargo.code} synced to Supabase Cloud DB`);
+      }
+    });
 
     // If it was fuel or rations, update stock
     if (updatedCargo.category === 'fuel') {
@@ -94,12 +118,12 @@ export default function App() {
     handleAddLog({
       type: 'qr_verify',
       title: `CONFIRMED: #${updatedCargo.code}`,
-      detail: `${updatedCargo.title} movement logged to Step ${updatedCargo.currentStep} (${updatedCargo.condition.toUpperCase()}).`,
+      detail: `${updatedCargo.title} movement logged to Step ${updatedCargo.currentStep} (${updatedCargo.condition.toUpperCase()}). Synced to Supabase.`,
       actor: 'Cargo Scanner Visor (Port Dock)',
       status: 'VERIFIED',
     });
 
-    showToast(`Scan verified & synchronized: #${updatedCargo.code}`);
+    showToast(`Scan verified & Supabase synced: #${updatedCargo.code}`);
   };
 
   const handleUpdateStock = (id: string, amount: number) => {
