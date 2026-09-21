@@ -29,6 +29,8 @@ interface CargoScannerProps {
   currentScanned: CargoItem;
   onSelectCargo: (cargo: CargoItem) => void;
   onConfirmScan: (updatedCargo: CargoItem) => void;
+  onOpenDatabaseSync?: () => void;
+  isDatabaseRlsBlocked?: boolean;
 }
 
 export const CargoScanner: React.FC<CargoScannerProps> = ({
@@ -36,6 +38,8 @@ export const CargoScanner: React.FC<CargoScannerProps> = ({
   currentScanned,
   onSelectCargo,
   onConfirmScan,
+  onOpenDatabaseSync,
+  isDatabaseRlsBlocked = false,
 }) => {
   const [torchActive, setTorchActive] = useState<boolean>(false);
   const [cameraMode, setCameraMode] = useState<'rugged_visor' | 'optic_high_contrast'>('rugged_visor');
@@ -107,10 +111,21 @@ export const CargoScanner: React.FC<CargoScannerProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 text-emerald-800 font-semibold">
-          <Database className="w-4 h-4 text-emerald-600" />
-          <span>SUPABASE: {isSupabaseConfigured ? 'REALTIME CLOUD' : 'LOCAL CACHE'} • 24ms</span>
-        </div>
+        <button
+          type="button"
+          onClick={onOpenDatabaseSync}
+          className={`flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-xl border font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+            isDatabaseRlsBlocked
+              ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+          title="Click to Open Supabase Cloud Database Manager"
+        >
+          <Database className={`w-4 h-4 ${isDatabaseRlsBlocked ? 'text-amber-600' : 'text-emerald-600'}`} />
+          <span>
+            SUPABASE: {isDatabaseRlsBlocked ? 'RLS ACTION REQ' : isSupabaseConfigured ? 'REALTIME CLOUD' : 'LOCAL CACHE'} • 24ms
+          </span>
+        </button>
       </div>
 
       {/* Interactive Cargo Switcher Bar */}

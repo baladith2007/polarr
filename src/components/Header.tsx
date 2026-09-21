@@ -22,6 +22,8 @@ interface HeaderProps {
   onOpenSos: () => void;
   currentTab?: TabType;
   onSelectTab?: (tab: TabType) => void;
+  onOpenDatabaseSync?: () => void;
+  isDatabaseRlsBlocked?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +33,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSos,
   currentTab = 'landing',
   onSelectTab,
+  onOpenDatabaseSync,
+  isDatabaseRlsBlocked = false,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm transition-colors">
@@ -67,12 +71,29 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick telemetry pills (desktop & tablet) */}
           <div className="hidden lg:flex items-center gap-3">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>SUPABASE</span>
-              <span className="font-mono text-emerald-700 font-normal">24ms</span>
-            </div>
+            <button
+              type="button"
+              onClick={onOpenDatabaseSync}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+                isDatabaseRlsBlocked
+                  ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              }`}
+              title="Open Supabase Cloud Database Sync Manager"
+            >
+              <span className={`w-2 h-2 rounded-full animate-ping ${
+                isDatabaseRlsBlocked ? 'bg-amber-500' : 'bg-emerald-500'
+              }`} />
+              <Database className={`w-3.5 h-3.5 ${
+                isDatabaseRlsBlocked ? 'text-amber-600' : 'text-emerald-600'
+              }`} />
+              <span>{isDatabaseRlsBlocked ? 'SUPABASE (RLS FIX)' : 'SUPABASE'}</span>
+              <span className={`font-mono font-normal ${
+                isDatabaseRlsBlocked ? 'text-amber-700' : 'text-emerald-700'
+              }`}>
+                {isDatabaseRlsBlocked ? 'ACTION REQ' : '24ms'}
+              </span>
+            </button>
 
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-800">
               <Satellite className="w-3.5 h-3.5 text-sky-600" />
@@ -153,10 +174,18 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Mobile secondary bar */}
         <div className="flex lg:hidden items-center justify-between py-2 border-t border-slate-100 text-xs text-slate-600">
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1 text-emerald-700 font-semibold">
+            <button
+              type="button"
+              onClick={onOpenDatabaseSync}
+              className={`flex items-center gap-1 font-semibold px-2 py-0.5 rounded-md border ${
+                isDatabaseRlsBlocked
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}
+            >
               <Database className="w-3 h-3 text-emerald-600" />
-              <span>SUPABASE 24ms</span>
-            </span>
+              <span>{isDatabaseRlsBlocked ? 'SUPABASE RLS FIX' : 'SUPABASE 24ms'}</span>
+            </button>
             <span className="text-slate-300">•</span>
             <span className="text-slate-500 font-mono">IRIDIUM LOCK</span>
           </div>

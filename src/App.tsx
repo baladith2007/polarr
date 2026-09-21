@@ -13,6 +13,7 @@ import { MapTracking } from './components/MapTracking';
 import { InventoryAI } from './components/InventoryAI';
 import { EmergencyProtocolView } from './components/EmergencyProtocolView';
 import { EmergencyModal } from './components/EmergencyModal';
+import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { Toast } from './components/Toast';
 import { 
   initialWeatherData, 
@@ -27,6 +28,8 @@ import {
   syncCargoToSupabase, 
   logEventToSupabase, 
   loadCargoFromSupabase, 
+  checkSupabaseHealth,
+  subscribeToSupabaseRealtime,
   isSupabaseConfigured 
 } from './lib/supabase';
 
@@ -41,6 +44,8 @@ export default function App() {
   const [logStream, setLogStream] = useState<LogEvent[]>(initialLogStream);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isSosOpen, setIsSosOpen] = useState<boolean>(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+  const [isDatabaseRlsBlocked, setIsDatabaseRlsBlocked] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Auto dismiss toast
@@ -48,19 +53,49 @@ export default function App() {
     if (toastMessage) {
       const timer = setTimeout(() => {
         setToastMessage(null);
-      }, 3500);
+      }, 4500);
       return () => clearTimeout(timer);
     }
   }, [toastMessage]);
 
-  // Load persistent cargo state from Supabase / offline cache on mount
+  // Load persistent cargo state and diagnostics on mount
   useEffect(() => {
+    // 1. Diagnostics check for RLS
+    checkSupabaseHealth().then((report) => {
+      setIsDatabaseRlsBlocked(report.isRlsBlocked);
+      if (report.isRlsBlocked) {
+        setToastMessage('⚠️ Supabase RLS is blocking writes. Click "SUPABASE" in header to copy the SQL write fix.');
+      }
+    });
+
+    // 2. Load cargo data from Supabase
     loadCargoFromSupabase().then((loaded) => {
       if (loaded && loaded.length > 0) {
         setCargoList(loaded);
         setCurrentScanned(loaded[0]);
       }
     });
+
+    // 3. Subscribe to Real-time database updates
+    const unsubscribe = subscribeToSupabaseRealtime(
+      (updatedCargo) => {
+        setCargoList((prev) => {
+          const exists = prev.some((c) => c.id === updatedCargo.id);
+          if (exists) {
+            return prev.map((c) => (c.id === updatedCargo.id ? updatedCargo : c));
+          }
+          return [updatedCargo, ...prev];
+        });
+        showToast(`Realtime Sync: #${updatedCargo.code} updated from Supabase`);
+      },
+      (newLog) => {
+        setLogStream((prev) => [newLog, ...prev]);
+      }
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -85,12 +120,16 @@ export default function App() {
       ...newLog,
     };
     setLogStream((prev) => [log, ...prev]);
-    logEventToSupabase(log);
+    logEventToSupabase(log).then((res) => {
+      if (res.isRlsBlocked) {
+        setIsDatabaseRlsBlocked(true);
+      }
+    });
     showToast(`Logged to Station Feed: ${newLog.title}`);
   };
 
   const handleConfirmScan = (updatedCargo: CargoItem) => {
-    // Update cargo list
+    // Update cargo list locally
     setCargoList((prev) =>
       prev.map((item) => (item.id === updatedCargo.id ? updatedCargo : item))
     );
@@ -99,7 +138,11 @@ export default function App() {
     // Sync to Supabase table cargo_manifest
     syncCargoToSupabase(updatedCargo).then((res) => {
       if (res.source === 'supabase') {
+        setIsDatabaseRlsBlocked(false);
         showToast(`Scan #${updatedCargo.code} synced to Supabase Cloud DB`);
+      } else if (res.isRlsBlocked) {
+        setIsDatabaseRlsBlocked(true);
+        showToast(`⚠️ Saved locally: Supabase write blocked by RLS. Click "SUPABASE" in header to copy SQL fix.`);
       }
     });
 
@@ -118,12 +161,12 @@ export default function App() {
     handleAddLog({
       type: 'qr_verify',
       title: `CONFIRMED: #${updatedCargo.code}`,
-      detail: `${updatedCargo.title} movement logged to Step ${updatedCargo.currentStep} (${updatedCargo.condition.toUpperCase()}). Synced to Supabase.`,
+      detail: `${updatedCargo.title} movement logged to Step ${updatedCargo.currentStep} (${updatedCargo.condition.toUpperCase()}).`,
       actor: 'Cargo Scanner Visor (Port Dock)',
       status: 'VERIFIED',
     });
 
-    showToast(`Scan verified & Supabase synced: #${updatedCargo.code}`);
+    showToast(`Scan verified & state updated: #${updatedCargo.code}`);
   };
 
   const handleUpdateStock = (id: string, amount: number) => {
@@ -168,6 +211,8 @@ export default function App() {
           setCurrentTab(tab);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
+        onOpenDatabaseSync={() => setIsSupabaseModalOpen(true)}
+        isDatabaseRlsBlocked={isDatabaseRlsBlocked}
       />
 
       {/* Desktop Sub-Navigation */}
@@ -208,6 +253,8 @@ export default function App() {
               setSelectedConvoyId(convoyId);
               setCurrentTab('map');
             }}
+            onOpenDatabaseSync={() => setIsSupabaseModalOpen(true)}
+            isDatabaseRlsBlocked={isDatabaseRlsBlocked}
           />
         )}
 
@@ -217,6 +264,8 @@ export default function App() {
             currentScanned={currentScanned}
             onSelectCargo={(item) => setCurrentScanned(item)}
             onConfirmScan={handleConfirmScan}
+            onOpenDatabaseSync={() => setIsSupabaseModalOpen(true)}
+            isDatabaseRlsBlocked={isDatabaseRlsBlocked}
           />
         )}
 
@@ -245,6 +294,18 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Supabase Cloud Sync & Health Modal */}
+      <SupabaseSyncModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        cargoList={cargoList}
+        onUpdateCargoList={(newList) => {
+          setCargoList(newList);
+          if (newList.length > 0) setCurrentScanned(newList[0]);
+        }}
+        onNotify={showToast}
+      />
 
       {/* Emergency Distress Modal */}
       <EmergencyModal

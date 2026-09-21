@@ -29,6 +29,8 @@ interface OpsDashboardProps {
   onAddLog: (newLog: Omit<LogEvent, 'id' | 'time'>) => void;
   onNavigateTab: (tab: 'cargo' | 'map' | 'inventory' | 'emergency') => void;
   onSelectConvoy: (convoyId: string) => void;
+  onOpenDatabaseSync?: () => void;
+  isDatabaseRlsBlocked?: boolean;
 }
 
 export const OpsDashboard: React.FC<OpsDashboardProps> = ({
@@ -38,6 +40,8 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
   onAddLog,
   onNavigateTab,
   onSelectConvoy,
+  onOpenDatabaseSync,
+  isDatabaseRlsBlocked = false,
 }) => {
   const [logFilter, setLogFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -231,25 +235,44 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
         </div>
 
         {/* Supabase Cloud DB Health */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div 
+          onClick={onOpenDatabaseSync}
+          className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between cursor-pointer transition-all hover:shadow-md ${
+            isDatabaseRlsBlocked
+              ? 'bg-amber-50/50 border-amber-300 hover:border-amber-400'
+              : 'bg-white border-slate-200 hover:border-emerald-300'
+          }`}
+          title="Click to Open Supabase Cloud DB Sync Manager"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Supabase Cloud DB
             </span>
-            <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
+            <span className={`p-1.5 rounded-lg ${
+              isDatabaseRlsBlocked ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700'
+            }`}>
               <Database className="w-4 h-4" />
             </span>
           </div>
           <div className="mt-2">
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold font-mono text-emerald-600">
-                {isSupabaseConfigured ? 'LIVE SYNC' : 'REPLICA'}
+              <span className={`text-xl sm:text-2xl font-bold font-mono ${
+                isDatabaseRlsBlocked ? 'text-amber-700' : 'text-emerald-600'
+              }`}>
+                {isDatabaseRlsBlocked ? 'RLS RESTRICTED' : isSupabaseConfigured ? 'LIVE SYNC' : 'LOCAL CACHE'}
               </span>
-              <span className="text-xs font-mono text-slate-500 font-semibold">24ms</span>
+              <span className="text-xs font-mono text-slate-500 font-semibold">
+                {isDatabaseRlsBlocked ? 'FIX' : '24ms'}
+              </span>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Table: cargo_manifest • SBD channel
-            </p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-xs text-slate-500 truncate">
+                {isDatabaseRlsBlocked ? 'Click to copy RLS SQL fix' : 'Table: cargo_manifest • SBD channel'}
+              </p>
+              <span className="text-[10px] font-semibold text-sky-600 hover:underline flex-shrink-0 ml-1">
+                Manage ↗
+              </span>
+            </div>
           </div>
         </div>
 
