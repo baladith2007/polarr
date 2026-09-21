@@ -12,16 +12,19 @@ import {
   Terminal, 
   ExternalLink,
   ShieldAlert,
-  Server
+  Server,
+  Truck
 } from 'lucide-react';
 import { 
   checkSupabaseHealth, 
   seedAllCargoToSupabase, 
   loadCargoFromSupabase,
+  loadConvoysFromSupabase,
+  seedAllConvoysToSupabase,
   SupabaseHealthReport, 
   isSupabaseConfigured 
 } from '../lib/supabase';
-import { CargoItem } from '../types';
+import { CargoItem, ConvoyUnit } from '../types';
 import { soundManager } from '../utils/audio';
 
 interface SupabaseSyncModalProps {
@@ -29,6 +32,8 @@ interface SupabaseSyncModalProps {
   onClose: () => void;
   cargoList: CargoItem[];
   onUpdateCargoList: (newList: CargoItem[]) => void;
+  convoysList?: ConvoyUnit[];
+  onUpdateConvoysList?: (newList: ConvoyUnit[]) => void;
   onNotify: (msg: string) => void;
 }
 
@@ -37,15 +42,19 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   onClose,
   cargoList,
   onUpdateCargoList,
+  convoysList = [],
+  onUpdateConvoysList,
   onNotify,
 }) => {
   const [report, setReport] = useState<SupabaseHealthReport | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
+  const [isSeedingConvoys, setIsSeedingConvoys] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
+  const [isPullingConvoys, setIsPullingConvoys] = useState(false);
   const [sqlMode, setSqlMode] = useState<'policy' | 'disable'>('policy');
   const [copied, setCopied] = useState(false);
-  const [seedResult, setSeedResult] = useState<{ count?: number; error?: string } | null>(null);
+  const [seedResult, setSeedResult] = useState<{ count?: number; error?: string; target?: string } | null>(null);
 
   const runDiagnostics = async () => {
     setIsChecking(true);
@@ -78,18 +87,18 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
     onNotify('SQL script copied to clipboard!');
   };
 
-  const handleSeedAll = async () => {
+  const handleSeedCargo = async () => {
     setIsSeeding(true);
     setSeedResult(null);
     soundManager.playScanBeep();
     try {
       const res = await seedAllCargoToSupabase(cargoList);
       if (res.success) {
-        setSeedResult({ count: res.insertedCount });
+        setSeedResult({ count: res.insertedCount, target: 'cargo items' });
         onNotify(`Successfully synced ${res.insertedCount} cargo items to Supabase!`);
         runDiagnostics();
       } else {
-        setSeedResult({ error: res.error });
+        setSeedResult({ error: res.error, target: 'cargo items' });
         if (res.isRlsBlocked) {
           onNotify('Supabase write blocked by Row Level Security (RLS). Please apply the SQL fix.');
         } else {
@@ -98,9 +107,35 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setSeedResult({ error: msg });
+      setSeedResult({ error: msg, target: 'cargo items' });
     } finally {
       setIsSeeding(false);
+    }
+  };
+
+  const handleSeedConvoys = async () => {
+    setIsSeedingConvoys(true);
+    setSeedResult(null);
+    soundManager.playScanBeep();
+    try {
+      const res = await seedAllConvoysToSupabase(convoysList);
+      if (res.success) {
+        setSeedResult({ count: res.insertedCount, target: 'active convoys' });
+        onNotify(`Successfully synced ${res.insertedCount} field convoys to Supabase table convoys!`);
+        runDiagnostics();
+      } else {
+        setSeedResult({ error: res.error, target: 'active convoys' });
+        if (res.isRlsBlocked) {
+          onNotify('Supabase write blocked by Row Level Security (RLS). Please apply the SQL fix.');
+        } else {
+          onNotify(`Convoy sync failed: ${res.error}`);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSeedResult({ error: msg, target: 'active convoys' });
+    } finally {
+      setIsSeedingConvoys(false);
     }
   };
 
@@ -120,6 +155,27 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
       onNotify('Failed to fetch from Supabase.');
     } finally {
       setIsPulling(false);
+    }
+  };
+
+  const handlePullConvoys = async () => {
+    setIsPullingConvoys(true);
+    soundManager.playScanBeep();
+    try {
+      const freshConvoys = await loadConvoysFromSupabase();
+      if (freshConvoys && freshConvoys.length > 0) {
+        if (onUpdateConvoysList) {
+          onUpdateConvoysList(freshConvoys);
+        }
+        onNotify(`Loaded ${freshConvoys.length} active field convoys from Supabase!`);
+        runDiagnostics();
+      } else {
+        onNotify('Supabase convoys table returned 0 records.');
+      }
+    } catch (err) {
+      onNotify('Failed to fetch convoys from Supabase.');
+    } finally {
+      setIsPullingConvoys(false);
     }
   };
 
@@ -185,9 +241,9 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
             <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
-                <span className="text-xs text-slate-500 block font-medium">Read Permission</span>
+                <span className="text-xs text-slate-500 block font-medium">Cargo Manifest</span>
                 <span className="text-sm font-bold text-slate-800">
-                  {report?.canReadCargo ? `${report.cargoRowCount} items in cloud` : isChecking ? 'Testing...' : 'No Access'}
+                  {report?.canReadCargo ? `${report.cargoRowCount} rows in cloud` : isChecking ? 'Testing...' : 'No Access'}
                 </span>
               </div>
               {report?.canReadCargo ? (
@@ -199,19 +255,13 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
             <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
-                <span className="text-xs text-slate-500 block font-medium">Write Permission</span>
+                <span className="text-xs text-slate-500 block font-medium">Convoys & Traverses</span>
                 <span className="text-sm font-bold text-slate-800">
-                  {report?.canWriteCargo 
-                    ? 'Granted (Live)' 
-                    : report?.isRlsBlocked 
-                    ? 'Blocked (RLS)' 
-                    : isChecking 
-                    ? 'Probing...' 
-                    : 'Unverified'}
+                  {report?.canReadConvoys ? `${report.convoysRowCount} live convoys` : isChecking ? 'Testing...' : 'No Access'}
                 </span>
               </div>
-              {report?.canWriteCargo ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              {report?.canReadConvoys ? (
+                <Truck className="w-5 h-5 text-sky-600" />
               ) : (
                 <ShieldAlert className="w-5 h-5 text-amber-600" />
               )}
@@ -228,7 +278,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                     Database Write Blocked by Row Level Security (RLS)
                   </h4>
                   <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                    Your Supabase database tables (<code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono">cargo_manifest</code> & <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono">station_logs</code>) are connected, but Supabase requires a policy to allow public/anonymous write operations.
+                    Your Supabase database tables (<code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono">cargo_manifest</code>, <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono">station_logs</code>, and <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono">convoys</code>) are connected, but Supabase requires a policy to allow public/anonymous write operations.
                   </p>
                 </div>
               </div>
@@ -301,7 +351,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
               <div>
                 <span className="font-bold block">Supabase Realtime Cloud Sync is Fully Operational!</span>
-                <span>Both Read and Write operations are verified. All QR scans, fuel audits, and logs sync directly to your Supabase tables.</span>
+                <span>Both Read and Write operations are verified across cargo manifests and active convoys. Real-time subscriptions are streaming.</span>
               </div>
             </div>
           )}
@@ -314,49 +364,79 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                 : 'bg-red-50 border-red-200 text-red-800'
             }`}>
               {seedResult.count !== undefined ? (
-                <span>✅ Successfully synchronized {seedResult.count} cargo items to Supabase table <code className="font-mono">cargo_manifest</code>.</span>
+                <span>✅ Successfully synchronized {seedResult.count} {seedResult.target || 'records'} to Supabase cloud.</span>
               ) : (
-                <span>❌ Failed to sync: {seedResult.error}</span>
+                <span>❌ Failed to sync {seedResult.target || 'records'}: {seedResult.error}</span>
               )}
             </div>
           )}
 
           {/* Synchronize & Actions Panel */}
-          <div className="border-t border-slate-200 pt-4 space-y-3">
+          <div className="border-t border-slate-200 pt-4 space-y-4">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Database Sync Operations
             </h4>
             
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              <button
-                type="button"
-                onClick={runDiagnostics}
-                disabled={isChecking}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin text-sky-600' : 'text-slate-500'}`} />
-                <span>{isChecking ? 'Testing Permissions...' : 'Test Write Access'}</span>
-              </button>
+            {/* Cargo Sync Row */}
+            <div className="space-y-1.5">
+              <span className="text-xs font-semibold text-slate-600 block">Cargo Manifest Operations:</span>
+              <div className="flex flex-wrap gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={handleSeedCargo}
+                  disabled={isSeeding || isChecking}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <UploadCloud className={`w-4 h-4 ${isSeeding ? 'animate-bounce' : ''}`} />
+                  <span>{isSeeding ? 'Pushing Cargo...' : 'Push Cargo to Supabase'}</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={handleSeedAll}
-                disabled={isSeeding || isChecking}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors shadow-sm disabled:opacity-50"
-              >
-                <UploadCloud className={`w-4 h-4 ${isSeeding ? 'animate-bounce' : ''}`} />
-                <span>{isSeeding ? 'Pushing All Records...' : 'Push All Cargo to Supabase'}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={handlePullLatest}
+                  disabled={isPulling || isChecking}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <DownloadCloud className={`w-4 h-4 ${isPulling ? 'animate-bounce text-sky-600' : 'text-slate-500'}`} />
+                  <span>{isPulling ? 'Pulling Cargo...' : 'Pull Cargo from Supabase'}</span>
+                </button>
+              </div>
+            </div>
 
-              <button
-                type="button"
-                onClick={handlePullLatest}
-                disabled={isPulling || isChecking}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                <DownloadCloud className={`w-4 h-4 ${isPulling ? 'animate-bounce text-sky-600' : 'text-slate-500'}`} />
-                <span>{isPulling ? 'Pulling Records...' : 'Pull Latest from Supabase'}</span>
-              </button>
+            {/* Convoy Sync Row */}
+            <div className="space-y-1.5 pt-2 border-t border-slate-100">
+              <span className="text-xs font-semibold text-slate-600 block">Active Field Convoys & Traverses:</span>
+              <div className="flex flex-wrap gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={handleSeedConvoys}
+                  disabled={isSeedingConvoys || isChecking}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-medium transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <Truck className={`w-4 h-4 ${isSeedingConvoys ? 'animate-bounce' : ''}`} />
+                  <span>{isSeedingConvoys ? 'Pushing Convoys...' : 'Push Convoys to Supabase'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePullConvoys}
+                  disabled={isPullingConvoys || isChecking}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-sky-300 hover:bg-sky-50 text-sky-800 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  <DownloadCloud className={`w-4 h-4 ${isPullingConvoys ? 'animate-bounce text-sky-600' : 'text-sky-600'}`} />
+                  <span>{isPullingConvoys ? 'Pulling Convoys...' : 'Pull Convoys from Supabase'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={runDiagnostics}
+                  disabled={isChecking}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors disabled:opacity-50 ml-auto"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin text-sky-600' : 'text-slate-500'}`} />
+                  <span>{isChecking ? 'Testing...' : 'Test Diagnostics'}</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -366,7 +446,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-1.5 font-mono">
             <Server className="w-3.5 h-3.5 text-slate-400" />
-            <span>Tables: cargo_manifest • station_logs</span>
+            <span>Tables: cargo_manifest • convoys • station_logs</span>
           </div>
           <button
             type="button"

@@ -30,7 +30,10 @@ import {
   loadCargoFromSupabase, 
   checkSupabaseHealth,
   subscribeToSupabaseRealtime,
-  isSupabaseConfigured 
+  isSupabaseConfigured,
+  loadConvoysFromSupabase,
+  syncConvoyToSupabase,
+  seedAllConvoysToSupabase
 } from './lib/supabase';
 
 export default function App() {
@@ -76,6 +79,13 @@ export default function App() {
       }
     });
 
+    // 2b. Load convoys data from Supabase
+    loadConvoysFromSupabase().then((loadedConvoys) => {
+      if (loadedConvoys && loadedConvoys.length > 0) {
+        setConvoys(loadedConvoys);
+      }
+    });
+
     // 3. Subscribe to Real-time database updates
     const unsubscribe = subscribeToSupabaseRealtime(
       (updatedCargo) => {
@@ -90,6 +100,16 @@ export default function App() {
       },
       (newLog) => {
         setLogStream((prev) => [newLog, ...prev]);
+      },
+      (updatedConvoy) => {
+        setConvoys((prev) => {
+          const exists = prev.some((c) => c.id === updatedConvoy.id);
+          if (exists) {
+            return prev.map((c) => (c.id === updatedConvoy.id ? updatedConvoy : c));
+          }
+          return [...prev, updatedConvoy];
+        });
+        showToast(`Realtime Sync: ${updatedConvoy.name} updated from Supabase`);
       }
     );
 
@@ -196,6 +216,32 @@ export default function App() {
     }
   };
 
+  const handleUpdateConvoy = async (updatedConvoy: ConvoyUnit) => {
+    // 1. Optimistic local state update
+    setConvoys((prev) =>
+      prev.map((c) => (c.id === updatedConvoy.id ? updatedConvoy : c))
+    );
+
+    // 2. Sync to Supabase table convoys
+    const syncRes = await syncConvoyToSupabase(updatedConvoy);
+    if (syncRes.source === 'supabase') {
+      setIsDatabaseRlsBlocked(false);
+      showToast(`Convoy ${updatedConvoy.name} synced to Supabase`);
+    } else if (syncRes.isRlsBlocked) {
+      setIsDatabaseRlsBlocked(true);
+      showToast(`⚠️ Supabase write blocked by RLS. Click "SUPABASE" in header for SQL fix.`);
+    }
+
+    // 3. Station event log
+    handleAddLog({
+      type: 'route_change',
+      title: `TRAVERSE: ${updatedConvoy.name}`,
+      detail: `Status: ${updatedConvoy.status === 'en_route' ? 'EN ROUTE' : 'HELD'} (${updatedConvoy.speed}) • ${updatedConvoy.notes || 'Traverse update'}`,
+      actor: 'Station Dispatch Command',
+      status: updatedConvoy.status === 'en_route' ? 'PROCEEDING' : 'HOLD',
+    });
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-sky-100 selection:text-sky-900">
       
@@ -253,6 +299,7 @@ export default function App() {
               setSelectedConvoyId(convoyId);
               setCurrentTab('map');
             }}
+            onUpdateConvoy={handleUpdateConvoy}
             onOpenDatabaseSync={() => setIsSupabaseModalOpen(true)}
             isDatabaseRlsBlocked={isDatabaseRlsBlocked}
           />
@@ -274,6 +321,7 @@ export default function App() {
             convoys={convoys}
             selectedConvoyId={selectedConvoyId}
             onSelectConvoyId={(id) => setSelectedConvoyId(id)}
+            onUpdateConvoy={handleUpdateConvoy}
             onShowToast={showToast}
           />
         )}
@@ -300,9 +348,13 @@ export default function App() {
         isOpen={isSupabaseModalOpen}
         onClose={() => setIsSupabaseModalOpen(false)}
         cargoList={cargoList}
+        convoysList={convoys}
         onUpdateCargoList={(newList) => {
           setCargoList(newList);
           if (newList.length > 0) setCurrentScanned(newList[0]);
+        }}
+        onUpdateConvoysList={(newConvoys) => {
+          setConvoys(newConvoys);
         }}
         onNotify={showToast}
       />

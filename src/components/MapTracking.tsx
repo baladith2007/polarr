@@ -16,7 +16,8 @@ import {
   Flame, 
   Fuel, 
   Heart,
-  Thermometer
+  Thermometer,
+  RefreshCw
 } from 'lucide-react';
 import { ConvoyUnit } from '../types';
 import { soundManager } from '../utils/audio';
@@ -25,6 +26,7 @@ interface MapTrackingProps {
   convoys: ConvoyUnit[];
   selectedConvoyId?: string;
   onSelectConvoyId: (id: string) => void;
+  onUpdateConvoy?: (convoy: ConvoyUnit) => void;
   onShowToast: (message: string) => void;
 }
 
@@ -32,13 +34,16 @@ type FilterCategory = 'all' | 'vehicles' | 'teams' | 'crevasses' | 'fuel';
 
 export const MapTracking: React.FC<MapTrackingProps> = ({
   convoys,
-  selectedConvoyId = 'convoy-alpha',
+  selectedConvoyId,
   onSelectConvoyId,
+  onUpdateConvoy,
   onShowToast,
 }) => {
   const [activeFilter, setActiveFilter] = useState<FilterCategory>('all');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [selectedEntityKey, setSelectedEntityKey] = useState<string>(selectedConvoyId || 'convoy-alpha');
+  const [selectedEntityKey, setSelectedEntityKey] = useState<string>(
+    selectedConvoyId || (convoys[0]?.id || 'convoy-alpha')
+  );
 
   const selectedConvoy = convoys.find((c) => c.id === selectedEntityKey) || convoys[0];
 
@@ -51,12 +56,41 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
 
   const handleRadioPing = () => {
     soundManager.playRadioPing();
+    if (selectedConvoy && onUpdateConvoy) {
+      const pingTime = new Date().toLocaleTimeString('en-GB');
+      onUpdateConvoy({
+        ...selectedConvoy,
+        notes: `High-frequency VHF radio ping acknowledged at ${pingTime}. Telemetry nominal.`,
+      });
+    }
     onShowToast(`High-frequency VHF radio ping dispatched to ${selectedConvoy?.name || 'Unit'}`);
   };
 
   const handleRequestCheckin = () => {
     soundManager.playSuccessChime();
+    if (selectedConvoy && onUpdateConvoy) {
+      const checkinTime = new Date().toLocaleTimeString('en-GB');
+      onUpdateConvoy({
+        ...selectedConvoy,
+        notes: `Biometric & vital signs verified at ${checkinTime} UTC. Crew: ${selectedConvoy.crewCount} personnel nominal.`,
+      });
+    }
     onShowToast(`Biometric & telemetry check-in acknowledged by ${selectedConvoy?.lead || 'Crew'}`);
+  };
+
+  const handleToggleHold = () => {
+    if (!selectedConvoy || !onUpdateConvoy) return;
+    soundManager.playScanBeep();
+    const nextStatus = selectedConvoy.status === 'en_route' ? 'hold' : 'en_route';
+    const updatedNotes = nextStatus === 'hold'
+      ? `Held for weather/ice condition at ${new Date().toLocaleTimeString('en-GB')}.`
+      : `Traverse resumed at ${new Date().toLocaleTimeString('en-GB')}.`;
+    onUpdateConvoy({
+      ...selectedConvoy,
+      status: nextStatus,
+      notes: updatedNotes,
+    });
+    onShowToast(`${selectedConvoy.name} status updated to ${nextStatus === 'hold' ? 'HOLD' : 'EN ROUTE'}`);
   };
 
   return (
@@ -215,33 +249,56 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
           </div>
         </button>
 
-        {/* Clickable Marker 2: Convoy Alpha (PistonBully PB100 - Active Target) */}
-        {(activeFilter === 'all' || activeFilter === 'vehicles') && (
-          <button
-            type="button"
-            id="map-marker-convoy-alpha"
-            onClick={() => handleEntityClick('convoy-alpha', 'Convoy Alpha (PB100)')}
-            className="absolute top-[230px] left-[205px] -translate-x-1/2 -translate-y-1/2 group focus:outline-none"
-          >
-            <div className="relative flex items-center justify-center">
-              <span className="absolute w-12 h-12 rounded-full bg-sky-400/30 animate-pulse" />
-              <div className="w-10 h-10 rounded-xl bg-sky-700 text-white flex items-center justify-center shadow-lg border-2 border-white ring-2 ring-sky-300">
-                <Truck className="w-5 h-5" />
-              </div>
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center text-[9px] font-bold">
-                α
-              </span>
-            </div>
-            <div className="mt-1 px-2 py-0.5 rounded-md bg-white/95 border border-slate-200 shadow-sm text-center">
-              <span className="text-[10px] font-mono font-bold text-slate-900 block">
-                CONVOY α
-              </span>
-              <span className="text-[9px] font-mono text-emerald-700 font-semibold">
-                14 km/h • OK
-              </span>
-            </div>
-          </button>
-        )}
+        {/* Clickable Vehicle Markers for all active convoys */}
+        {(activeFilter === 'all' || activeFilter === 'vehicles') &&
+          convoys.map((c, idx) => {
+            const isSelected = selectedEntityKey === c.id;
+            // Provide stable coordinates for known units or staggered offsets for additional units
+            const topPos = idx === 0 ? 230 : idx === 1 ? 310 : 200 + (idx * 40);
+            const leftPos = idx === 0 ? 205 : idx === 1 ? 145 : 180 + (idx * 30);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                id={`map-marker-${c.id}`}
+                onClick={() => handleEntityClick(c.id, `${c.name} (${c.type})`)}
+                style={{ top: `${topPos}px`, left: `${leftPos}px` }}
+                className="absolute -translate-x-1/2 -translate-y-1/2 group focus:outline-none z-10"
+              >
+                <div className="relative flex items-center justify-center">
+                  {isSelected && (
+                    <span className="absolute w-12 h-12 rounded-full bg-sky-400/30 animate-pulse" />
+                  )}
+                  <div
+                    className={`w-10 h-10 rounded-xl text-white flex items-center justify-center shadow-lg border-2 border-white ring-2 ${
+                      isSelected
+                        ? 'bg-sky-700 ring-sky-400 scale-110'
+                        : c.status === 'en_route'
+                        ? 'bg-sky-600 ring-sky-200'
+                        : 'bg-amber-600 ring-amber-300'
+                    } transition-all`}
+                  >
+                    <Truck className="w-5 h-5" />
+                  </div>
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center text-[9px] font-bold">
+                    {idx === 0 ? 'α' : idx === 1 ? 'β' : `${idx + 1}`}
+                  </span>
+                </div>
+                <div className="mt-1 px-2 py-0.5 rounded-md bg-white/95 border border-slate-200 shadow-sm text-center">
+                  <span className="text-[10px] font-mono font-bold text-slate-900 block truncate max-w-[90px]">
+                    {c.name.split(' ')[0]} {idx === 0 ? 'α' : idx === 1 ? 'β' : ''}
+                  </span>
+                  <span
+                    className={`text-[9px] font-mono font-semibold block ${
+                      c.status === 'en_route' ? 'text-emerald-700' : 'text-amber-700'
+                    }`}
+                  >
+                    {c.speed} • {c.status === 'en_route' ? 'EN ROUTE' : 'HELD'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
 
         {/* Clickable Marker 3: Cargo Sled #03 (Drill Rig) */}
         {(activeFilter === 'all' || activeFilter === 'vehicles' || activeFilter === 'fuel') && (
@@ -375,13 +432,18 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
             <div className="flex items-center justify-between text-xs font-mono">
               <span className="text-slate-500 uppercase font-semibold">Arctic Diesel Remaining</span>
-              <span className="font-bold text-slate-900">68% (320 L)</span>
+              <span className="font-bold text-slate-900">
+                {selectedConvoy ? `${selectedConvoy.fuelPct}% (~${Math.round(selectedConvoy.fuelPct * 4.7)} L)` : '68% (320 L)'}
+              </span>
             </div>
             <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
-              <div className="bg-gradient-to-r from-emerald-500 to-sky-600 h-full rounded-full w-[68%]" />
+              <div 
+                className="bg-gradient-to-r from-emerald-500 to-sky-600 h-full rounded-full transition-all duration-500" 
+                style={{ width: `${selectedConvoy?.fuelPct || 68}%` }}
+              />
             </div>
             <span className="text-[11px] text-slate-500 font-mono block">
-              Consumption Rate: 18.2 L/h • 17h operational range
+              Consumption Rate: 18.2 L/h • {Math.round((selectedConvoy?.fuelPct || 68) * 0.25)}h operational range
             </span>
           </div>
 
@@ -392,13 +454,13 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
                 Cabin Internal Climate
               </span>
               <div className="text-2xl font-bold font-mono text-slate-900 flex items-center gap-1">
-                <span>+18.0°C</span>
+                <span>+{selectedConvoy?.cabinTemp || 18.0}°C</span>
                 <span className="text-xs text-emerald-700 font-semibold bg-emerald-100 px-1.5 py-0.2 rounded">
                   HEATED
                 </span>
               </div>
               <span className="text-[11px] text-slate-500 font-mono">
-                External Ambient: -38.4°C
+                External Ambient: {selectedConvoy?.extTemp || -38.4}°C
               </span>
             </div>
             <Thermometer className="w-8 h-8 text-sky-600" />
@@ -415,46 +477,67 @@ export const MapTracking: React.FC<MapTrackingProps> = ({
               </span>
             </div>
             <span className="text-sm font-bold font-mono text-sky-700">
-              4.8 KM REMAINING
+              {selectedConvoy?.distanceToDepotKm || 4.8} KM REMAINING
             </span>
           </div>
 
           <div className="flex items-center justify-between text-xs text-slate-600 font-mono pt-1 border-t border-slate-200/80">
-            <span>Ground Speed: 14 km/h (Vector 142° SE)</span>
-            <span className="font-bold text-slate-800">ETA: ~32 MINUTES</span>
+            <span>Ground Speed: {selectedConvoy?.speed || '14 km/h'} ({selectedConvoy?.bearing || 'Vector 142° SE'})</span>
+            <span className="font-bold text-slate-800">ETA: ~{selectedConvoy?.etaMin || 32} MINUTES</span>
           </div>
         </div>
 
         {/* Tactical Glove-Ready Actions */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
           <button
             type="button"
             id="radio-ping-btn"
             onClick={handleRadioPing}
-            className="h-14 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold font-mono text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-md shadow-sky-600/20 active:scale-95 transition-all"
+            className="h-13 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md shadow-sky-600/20 active:scale-95 transition-all"
           >
             <Radio className="w-4 h-4" />
-            <span>Dispatch Radio Ping</span>
+            <span>Radio Ping</span>
           </button>
 
           <button
             type="button"
             id="request-checkin-btn"
             onClick={handleRequestCheckin}
-            className="h-14 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl font-bold font-mono text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"
+            className="h-13 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"
           >
             <CheckCircle className="w-4 h-4 text-emerald-600" />
-            <span>Request Biometric Check-In</span>
+            <span>Biometric Check-In</span>
           </button>
+
+          {selectedConvoy && onUpdateConvoy && (
+            <button
+              type="button"
+              id="map-toggle-hold-btn"
+              onClick={handleToggleHold}
+              className={`h-13 rounded-xl font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all border ${
+                selectedConvoy.status === 'en_route'
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+              }`}
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>{selectedConvoy.status === 'en_route' ? 'Hold Traverse' : 'Resume Route'}</span>
+            </button>
+          )}
         </div>
 
-        {/* Local hazard route note */}
+        {/* Local hazard route / dispatch note */}
         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-amber-700 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-900 leading-relaxed">
-            <span className="font-bold">Active Navigation Warning: </span>
-            Convoy Alpha is currently rerouted 300m East to avoid active fracture zone CZ-7 at Ice Dome F. Sled #03 tethered safely with twin steel cables.
-          </p>
+          <div className="text-xs text-amber-900 leading-relaxed space-y-1">
+            <p>
+              <span className="font-bold">Active Navigation Log: </span>
+              {selectedConvoy?.notes || 'Traverse proceeding along marked GPS safe waypoints.'}
+            </p>
+            <p className="text-[11px] text-amber-800/80 font-mono">
+              Status: {selectedConvoy?.status === 'en_route' ? 'EN ROUTE (TRANSIT)' : 'HELD AT CHECKPOINT'} • Lead: {selectedConvoy?.lead || 'Station Command'} • Crew: {selectedConvoy?.crewCount || 3}
+            </p>
+          </div>
         </div>
       </div>
 

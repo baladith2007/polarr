@@ -16,7 +16,9 @@ import {
   Search,
   PlusCircle,
   ExternalLink,
-  Database
+  Database,
+  RefreshCw,
+  Radio
 } from 'lucide-react';
 import { ConvoyUnit, LogEvent, WeatherData } from '../types';
 import { soundManager } from '../utils/audio';
@@ -29,6 +31,7 @@ interface OpsDashboardProps {
   onAddLog: (newLog: Omit<LogEvent, 'id' | 'time'>) => void;
   onNavigateTab: (tab: 'cargo' | 'map' | 'inventory' | 'emergency') => void;
   onSelectConvoy: (convoyId: string) => void;
+  onUpdateConvoy?: (convoy: ConvoyUnit) => void;
   onOpenDatabaseSync?: () => void;
   isDatabaseRlsBlocked?: boolean;
 }
@@ -40,6 +43,7 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
   onAddLog,
   onNavigateTab,
   onSelectConvoy,
+  onUpdateConvoy,
   onOpenDatabaseSync,
   isDatabaseRlsBlocked = false,
 }) => {
@@ -349,20 +353,34 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
               Active Field Convoys & Traverses
             </h3>
           </div>
-          <span className="text-xs font-semibold font-mono text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
-            2 CONVOYS DISPATCHED
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold font-mono text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200">
+              {convoys.length} CONVOY{convoys.length !== 1 ? 'S' : ''} ACTIVE
+            </span>
+            {onOpenDatabaseSync && (
+              <button
+                type="button"
+                id="convoys-supabase-sync-btn"
+                onClick={onOpenDatabaseSync}
+                className="inline-flex items-center gap-1.5 text-xs font-mono font-bold px-2.5 py-1 rounded-lg border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 transition-colors shadow-xs"
+                title="Manage Supabase Cloud Synchronization"
+              >
+                <Database className="w-3.5 h-3.5 text-emerald-600" />
+                <span>SUPABASE SYNC</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {convoys.map((convoy) => (
             <div
               key={convoy.id}
-              className="bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl p-4 transition-all flex flex-col justify-between gap-3"
+              className="bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl p-4 transition-all flex flex-col justify-between gap-3 shadow-xs"
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className={`text-xs font-bold font-mono px-2 py-0.5 rounded-md ${
                         convoy.status === 'en_route'
@@ -375,6 +393,9 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
                     <span className="text-xs text-slate-500 font-mono">
                       {convoy.crewCount} Crew
                     </span>
+                    <span className="text-[10px] font-mono text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200" title={`Supabase ID: ${convoy.id}`}>
+                      ID: {convoy.id.length > 8 ? `${convoy.id.slice(0, 8)}...` : convoy.id}
+                    </span>
                   </div>
                   <h4 className="text-base font-bold text-slate-900 mt-1">
                     {convoy.name}
@@ -384,20 +405,50 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  id={`locate-convoy-${convoy.id}`}
-                  onClick={() => {
-                    soundManager.playRadioPing();
-                    onSelectConvoy(convoy.id);
-                    onNavigateTab('map');
-                  }}
-                  className="p-2 rounded-lg bg-white hover:bg-sky-50 text-sky-700 border border-slate-200 hover:border-sky-300 transition-colors shadow-sm flex items-center gap-1 text-xs font-bold"
-                  title="Locate on Map"
-                >
-                  <Navigation2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Track</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {onUpdateConvoy && (
+                    <button
+                      type="button"
+                      id={`toggle-status-${convoy.id}`}
+                      onClick={() => {
+                        soundManager.playScanBeep();
+                        const nextStatus = convoy.status === 'en_route' ? 'hold' : 'en_route';
+                        const updatedNotes = nextStatus === 'hold' 
+                          ? `Held at station checkpoint: weather delay. Logged at ${new Date().toLocaleTimeString('en-GB')}.`
+                          : `Traverse resumed nominal heading. Logged at ${new Date().toLocaleTimeString('en-GB')}.`;
+                        onUpdateConvoy({
+                          ...convoy,
+                          status: nextStatus,
+                          notes: updatedNotes,
+                        });
+                      }}
+                      className={`p-1.5 sm:px-2 sm:py-1 rounded-lg border text-xs font-mono font-semibold transition-colors flex items-center gap-1 ${
+                        convoy.status === 'en_route'
+                          ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                      }`}
+                      title={convoy.status === 'en_route' ? 'Hold Convoy and Sync to Supabase' : 'Resume Route and Sync to Supabase'}
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span className="hidden sm:inline">{convoy.status === 'en_route' ? 'Hold' : 'Resume'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    id={`locate-convoy-${convoy.id}`}
+                    onClick={() => {
+                      soundManager.playRadioPing();
+                      onSelectConvoy(convoy.id);
+                      onNavigateTab('map');
+                    }}
+                    className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-white hover:bg-sky-50 text-sky-700 border border-slate-200 hover:border-sky-300 transition-colors shadow-sm flex items-center gap-1 text-xs font-bold"
+                    title="Locate on Tactical Map"
+                  >
+                    <Navigation2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Track</span>
+                  </button>
+                </div>
               </div>
 
               {/* Specs grid */}
@@ -420,9 +471,31 @@ export const OpsDashboard: React.FC<OpsDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="text-xs text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200/80">
-                <span className="font-semibold text-slate-700">Dispatch Log: </span>
-                {convoy.notes}
+              <div className="flex items-start justify-between gap-2 text-xs text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200/80">
+                <div className="flex-1 min-w-0">
+                  <span className="font-semibold text-slate-700">Dispatch Log: </span>
+                  <span>{convoy.notes || 'Traverse proceeding along marked route.'}</span>
+                </div>
+                {onUpdateConvoy && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundManager.playRadioPing();
+                      const currentSpd = parseFloat(convoy.speed) || 12;
+                      const newSpd = currentSpd >= 18 ? 10 : currentSpd + 2;
+                      onUpdateConvoy({
+                        ...convoy,
+                        speed: `${newSpd} km/h`,
+                        notes: `Radio check-in verified at ${new Date().toLocaleTimeString('en-GB')}. Speed adjusted to ${newSpd} km/h.`,
+                      });
+                    }}
+                    className="flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 flex items-center gap-1 font-semibold"
+                    title="Radio Check-in and Sync to Supabase"
+                  >
+                    <Radio className="w-3 h-3 text-sky-600" />
+                    <span>Ping</span>
+                  </button>
+                )}
               </div>
             </div>
           ))}
